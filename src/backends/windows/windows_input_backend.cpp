@@ -17,9 +17,13 @@ constexpr float kTriggerMax = 255.0f;
 
 class WindowsInputBackend : public IInputBackend {
 public:
+    WindowsInputBackend() { findController(); }
+
     void Update() override {
+        if (slot_ < 0) { findController(); if (slot_ < 0) return; }
         ZeroMemory(&state_, sizeof(state_));
-        connected_ = (XInputGetState(0, &state_) == ERROR_SUCCESS);
+        connected_ = (XInputGetState(slot_, &state_) == ERROR_SUCCESS);
+        if (!connected_) { slot_ = -1; } // controller disconnected
     }
 
     bool Down(Button button) override {
@@ -64,8 +68,23 @@ public:
     }
 
 private:
+    void findController() {
+        for (int i = 0; i < 4; ++i) {
+            XINPUT_STATE s{};
+            if (XInputGetState(i, &s) == ERROR_SUCCESS) {
+                slot_ = i;
+                state_ = s;
+                connected_ = true;
+                return;
+            }
+        }
+        slot_ = -1;
+        connected_ = false;
+    }
+
     XINPUT_STATE state_{};
     bool connected_ = false;
+    int slot_ = -1;   // XInput player slot, -1 = not found
 };
 
 } // namespace
