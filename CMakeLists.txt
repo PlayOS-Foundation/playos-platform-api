@@ -19,13 +19,18 @@ target_include_directories(playos-platform-api PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Select the platform backend. Windows is the primary SDK target; other
-# platforms fall back to a null backend until a real backend is added.
+# Select the platform backend. Windows is the primary SDK target; Linux is the
+# reference runtime-device platform; other platforms fall back to a null
+# backend until a real backend is added.
 if(WIN32)
     target_sources(playos-platform-api PRIVATE
         src/backends/windows/windows_input_backend.cpp)
     target_link_libraries(playos-platform-api PRIVATE Xinput)
     target_compile_definitions(playos-platform-api PRIVATE PLAYOS_BACKEND_WINDOWS)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(playos-platform-api PRIVATE
+        src/backends/linux/linux_input_backend.cpp)
+    target_compile_definitions(playos-platform-api PRIVATE PLAYOS_BACKEND_LINUX)
 else()
     target_sources(playos-platform-api PRIVATE
         src/backends/null/null_input_backend.cpp)
