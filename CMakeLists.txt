@@ -120,20 +120,35 @@ target_include_directories(playos-display-null PRIVATE
 # ── storage backends (link-time choice) ───────────────────────────────────
 #
 # The consumer picks one backend:
-#   playos-storage-platform  OS-standard app data dirs (recommended for PoC)
-#   playos-storage-null      returns cwd (placeholder)
+#   playos-storage-windows  %LOCALAPPDATA%/PlayOS (Windows only)
+#   playos-storage-linux    XDG Base Directory paths (Linux only)
+#   playos-storage-null     returns cwd (placeholder, always available)
 
-# Platform backend — uses %LOCALAPPDATA%/PlayOS (Windows) or
-# $XDG_DATA_HOME/PlayOS (Linux). No special dependencies.
-add_library(playos-storage-platform
-    src/storage.cpp
-    src/backends/platform/platform_storage_backend.cpp)
-add_library(PlayOS::playos-storage-platform ALIAS playos-storage-platform)
-target_include_directories(playos-storage-platform PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
-target_include_directories(playos-storage-platform PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Windows backend — uses SHGetFolderPath(CSIDL_LOCAL_APPDATA).
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_library(playos-storage-windows
+        src/storage.cpp
+        src/backends/windows/windows_storage_backend.cpp)
+    add_library(PlayOS::playos-storage-windows ALIAS playos-storage-windows)
+    target_include_directories(playos-storage-windows PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-storage-windows PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
+
+# Linux backend — uses $XDG_DATA_HOME or ~/.local/share.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(playos-storage-linux
+        src/storage.cpp
+        src/backends/linux/linux_storage_backend.cpp)
+    add_library(PlayOS::playos-storage-linux ALIAS playos-storage-linux)
+    target_include_directories(playos-storage-linux PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-storage-linux PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
 
 # Null backend — always available, returns cwd/saves and cwd/config.
 add_library(playos-storage-null
