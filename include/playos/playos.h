@@ -6,8 +6,10 @@
 #pragma once
 
 #include "playos/capabilities.h"
+#include "playos/display.h"
 #include "playos/input.h"
 #include "playos/lifecycle.h"
+#include "playos/storage.h"
 
 #define PLAYOS_VERSION_MAJOR 0
 #define PLAYOS_VERSION_MINOR 1

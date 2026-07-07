@@ -4,9 +4,12 @@ project(playos_platform_api VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ── core library (engine-agnostic, no input backend) ──────────────────────
+#
+# Lifecycle + Capabilities only. Input is provided by a separately-linked
+# backend that the consumer chooses.
 add_library(playos-platform-api
     src/capabilities.cpp
-    src/input.cpp
     src/lifecycle.cpp
 )
 add_library(PlayOS::PlatformAPI ALIAS playos-platform-api)
@@ -19,22 +22,126 @@ target_include_directories(playos-platform-api PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Select the platform backend. Windows is the primary SDK target; Linux is the
-# reference runtime-device platform; other platforms fall back to a null
-# backend until a real backend is added.
-if(WIN32)
-    target_sources(playos-platform-api PRIVATE
+# ── input backends (link-time choice) ─────────────────────────────────────
+#
+# The consumer picks one backend:
+#   playos-input-raylib   wraps Raylib's gamepad API (recommended for PoC)
+#   playos-input-xinput   wraps XInput (Windows only)
+#   playos-input-evdev    evdev gamepad (Linux only)
+#   playos-input-null     reports no input (placeholder)
+#
+# Each backend compiles input.cpp (the public Input API) alongside its own
+# implementation of IInputBackend.
+
+# Raylib backend — the recommended default for the vertical-slice PoC.
+# Works on Windows and Linux; supports DualSense, Switch Pro, Xbox, etc.
+add_library(playos-input-raylib
+    src/input.cpp
+    src/backends/raylib/raylib_input_backend.cpp)
+add_library(PlayOS::playos-input-raylib ALIAS playos-input-raylib)
+target_include_directories(playos-input-raylib PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-input-raylib PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(playos-input-raylib PUBLIC raylib)
+target_compile_definitions(playos-input-raylib PRIVATE PLAYOS_INPUT_RAYLIB)
+
+# XInput backend — Windows only, Xbox-compatible controllers.
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_library(playos-input-xinput
+        src/input.cpp
         src/backends/windows/windows_input_backend.cpp)
-    target_link_libraries(playos-platform-api PRIVATE Xinput)
-    target_compile_definitions(playos-platform-api PRIVATE PLAYOS_BACKEND_WINDOWS)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(playos-platform-api PRIVATE
-        src/backends/linux/linux_input_backend.cpp)
-    target_compile_definitions(playos-platform-api PRIVATE PLAYOS_BACKEND_LINUX)
-else()
-    target_sources(playos-platform-api PRIVATE
-        src/backends/null/null_input_backend.cpp)
-    target_compile_definitions(playos-platform-api PRIVATE PLAYOS_BACKEND_NULL)
+    add_library(PlayOS::playos-input-xinput ALIAS playos-input-xinput)
+    target_include_directories(playos-input-xinput PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-input-xinput PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(playos-input-xinput PUBLIC Xinput)
+    target_compile_definitions(playos-input-xinput PRIVATE PLAYOS_INPUT_XINPUT)
 endif()
 
-option(PLAYOS_PLATFORM_API_BUILD_EXAMPLES "Build Platform API examples" OFF)
+# evdev backend — Linux only, reads /dev/input/event* directly.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(playos-input-evdev
+        src/input.cpp
+        src/backends/linux/linux_input_backend.cpp)
+    add_library(PlayOS::playos-input-evdev ALIAS playos-input-evdev)
+    target_include_directories(playos-input-evdev PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-input-evdev PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(playos-input-evdev PRIVATE PLAYOS_INPUT_EVDEV)
+endif()
+
+# Null backend — always available, reports no input.
+add_library(playos-input-null
+    src/input.cpp
+    src/backends/null/null_input_backend.cpp)
+add_library(PlayOS::playos-input-null ALIAS playos-input-null)
+target_include_directories(playos-input-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-input-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(playos-input-null PRIVATE PLAYOS_INPUT_NULL)
+
+# ── display backends (link-time choice) ───────────────────────────────────
+#
+# The consumer picks one backend:
+#   playos-display-raylib  wraps Raylib's monitor API (recommended for PoC)
+#   playos-display-null    returns safe defaults (placeholder)
+
+# Raylib backend — recommended PoC default. Works on Windows and Linux.
+add_library(playos-display-raylib
+    src/display.cpp
+    src/backends/raylib/raylib_display_backend.cpp)
+add_library(PlayOS::playos-display-raylib ALIAS playos-display-raylib)
+target_include_directories(playos-display-raylib PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-display-raylib PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(playos-display-raylib PUBLIC raylib)
+
+# Null backend — always available, returns 1280×720@60.
+add_library(playos-display-null
+    src/display.cpp
+    src/backends/null/null_display_backend.cpp)
+add_library(PlayOS::playos-display-null ALIAS playos-display-null)
+target_include_directories(playos-display-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-display-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ── storage backends (link-time choice) ───────────────────────────────────
+#
+# The consumer picks one backend:
+#   playos-storage-platform  OS-standard app data dirs (recommended for PoC)
+#   playos-storage-null      returns cwd (placeholder)
+
+# Platform backend — uses %LOCALAPPDATA%/PlayOS (Windows) or
+# $XDG_DATA_HOME/PlayOS (Linux). No special dependencies.
+add_library(playos-storage-platform
+    src/storage.cpp
+    src/backends/platform/platform_storage_backend.cpp)
+add_library(PlayOS::playos-storage-platform ALIAS playos-storage-platform)
+target_include_directories(playos-storage-platform PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-storage-platform PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# Null backend — always available, returns cwd/saves and cwd/config.
+add_library(playos-storage-null
+    src/storage.cpp
+    src/backends/null/null_storage_backend.cpp)
+add_library(PlayOS::playos-storage-null ALIAS playos-storage-null)
+target_include_directories(playos-storage-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-storage-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
