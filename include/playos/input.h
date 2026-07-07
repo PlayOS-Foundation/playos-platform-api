@@ -56,5 +56,8 @@ bool Pressed(Button button);
 // Current value of an analog axis.
 float GetAxis(Axis axis);
 
+// True when a controller is physically connected and providing input.
+bool ControllerConnected();
+
 } // namespace Input
 } // namespace PlayOS

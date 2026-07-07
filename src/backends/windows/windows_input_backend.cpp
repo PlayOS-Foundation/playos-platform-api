@@ -67,6 +67,8 @@ public:
         }
     }
 
+    bool Connected() const override { return connected_; }
+
 private:
     void findController() {
         for (int i = 0; i < 4; ++i) {

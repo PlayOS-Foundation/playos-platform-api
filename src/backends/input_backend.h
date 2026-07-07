@@ -20,6 +20,9 @@ public:
 
     // Current value of the logical axis.
     virtual float GetAxis(Axis axis) = 0;
+
+    // True when a physical controller is connected.
+    virtual bool Connected() const = 0;
 };
 
 // Creates the platform-selected input backend. Implemented by exactly one

@@ -12,6 +12,7 @@ public:
     void Update() override {}
     bool Down(Button) override { return false; }
     float GetAxis(Axis) override { return 0.0f; }
+    bool Connected() const override { return false; }
 };
 
 } // namespace

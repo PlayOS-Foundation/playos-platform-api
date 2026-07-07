@@ -47,5 +47,9 @@ float GetAxis(Axis axis) {
     return backend()->GetAxis(axis);
 }
 
+bool ControllerConnected() {
+    return backend()->Connected();
+}
+
 } // namespace Input
 } // namespace PlayOS

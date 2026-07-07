@@ -143,6 +143,8 @@ private:
         }
     }
 
+    bool Connected() const override { return fd_ >= 0; }
+
     int fd_ = -1;
     bool buttons_[static_cast<int>(Button::Count)] = {false};
     float axes_[6] = {0.0f};
