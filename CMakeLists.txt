@@ -35,17 +35,20 @@ target_include_directories(playos-platform-api PRIVATE
 
 # Raylib backend — the recommended default for the vertical-slice PoC.
 # Works on Windows and Linux; supports DualSense, Switch Pro, Xbox, etc.
-add_library(playos-input-raylib
-    src/input.cpp
-    src/backends/raylib/raylib_input_backend.cpp)
-add_library(PlayOS::playos-input-raylib ALIAS playos-input-raylib)
-target_include_directories(playos-input-raylib PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
-target_include_directories(playos-input-raylib PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(playos-input-raylib PUBLIC raylib)
-target_compile_definitions(playos-input-raylib PRIVATE PLAYOS_INPUT_RAYLIB)
+# Only built when raylib is available (fetched by the consuming project).
+if(TARGET raylib)
+    add_library(playos-input-raylib
+        src/input.cpp
+        src/backends/raylib/raylib_input_backend.cpp)
+    add_library(PlayOS::playos-input-raylib ALIAS playos-input-raylib)
+    target_include_directories(playos-input-raylib PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-input-raylib PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(playos-input-raylib PUBLIC raylib)
+    target_compile_definitions(playos-input-raylib PRIVATE PLAYOS_INPUT_RAYLIB)
+endif()
 
 # XInput backend — Windows only, Xbox-compatible controllers.
 if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
@@ -95,16 +98,19 @@ target_compile_definitions(playos-input-null PRIVATE PLAYOS_INPUT_NULL)
 #   playos-display-null    returns safe defaults (placeholder)
 
 # Raylib backend — recommended PoC default. Works on Windows and Linux.
-add_library(playos-display-raylib
-    src/display.cpp
-    src/backends/raylib/raylib_display_backend.cpp)
-add_library(PlayOS::playos-display-raylib ALIAS playos-display-raylib)
-target_include_directories(playos-display-raylib PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
-target_include_directories(playos-display-raylib PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(playos-display-raylib PUBLIC raylib)
+# Only built when raylib is available (fetched by the consuming project).
+if(TARGET raylib)
+    add_library(playos-display-raylib
+        src/display.cpp
+        src/backends/raylib/raylib_display_backend.cpp)
+    add_library(PlayOS::playos-display-raylib ALIAS playos-display-raylib)
+    target_include_directories(playos-display-raylib PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-display-raylib PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(playos-display-raylib PUBLIC raylib)
+endif()
 
 # Null backend — always available, returns 1280×720@60.
 add_library(playos-display-null
