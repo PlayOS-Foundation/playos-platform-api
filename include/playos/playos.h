@@ -5,11 +5,13 @@
 // "Engine Agnostic"). Raylib, SDL, Godot, or a custom engine may sit above it.
 #pragma once
 
+#include "playos/audio.h"
 #include "playos/capabilities.h"
 #include "playos/display.h"
 #include "playos/input.h"
 #include "playos/lifecycle.h"
 #include "playos/storage.h"
+#include "playos/touch.h"
 
 #define PLAYOS_VERSION_MAJOR 0
 #define PLAYOS_VERSION_MINOR 1

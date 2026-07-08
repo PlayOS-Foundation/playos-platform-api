@@ -166,3 +166,65 @@ target_include_directories(playos-storage-null PUBLIC
     $<INSTALL_INTERFACE:include>)
 target_include_directories(playos-storage-null PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ── audio backends (link-time choice) ─────────────────────────────────────
+#
+# The consumer picks one backend:
+#   playos-audio-raylib  wraps Raylib's audio API (recommended for PoC)
+#   playos-audio-null    no-op (placeholder)
+
+# Raylib backend — recommended PoC default. Works on all Raylib platforms.
+if(TARGET raylib)
+    add_library(playos-audio-raylib
+        src/audio.cpp
+        src/backends/raylib/raylib_audio_backend.cpp)
+    add_library(PlayOS::playos-audio-raylib ALIAS playos-audio-raylib)
+    target_include_directories(playos-audio-raylib PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-audio-raylib PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(playos-audio-raylib PUBLIC raylib)
+endif()
+
+# Null backend — always available, does nothing.
+add_library(playos-audio-null
+    src/audio.cpp
+    src/backends/null/null_audio_backend.cpp)
+add_library(PlayOS::playos-audio-null ALIAS playos-audio-null)
+target_include_directories(playos-audio-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-audio-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ── touch backends (link-time choice) ─────────────────────────────────────
+#
+# The consumer picks one backend:
+#   playos-touch-raylib  wraps Raylib's touch API (recommended for PoC)
+#   playos-touch-null    reports no touch (placeholder)
+
+# Raylib backend — recommended PoC default. Works on all Raylib platforms.
+if(TARGET raylib)
+    add_library(playos-touch-raylib
+        src/touch.cpp
+        src/backends/raylib/raylib_touch_backend.cpp)
+    add_library(PlayOS::playos-touch-raylib ALIAS playos-touch-raylib)
+    target_include_directories(playos-touch-raylib PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-touch-raylib PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(playos-touch-raylib PUBLIC raylib)
+endif()
+
+# Null backend — always available, reports no touch points.
+add_library(playos-touch-null
+    src/touch.cpp
+    src/backends/null/null_touch_backend.cpp)
+add_library(PlayOS::playos-touch-null ALIAS playos-touch-null)
+target_include_directories(playos-touch-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-touch-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
