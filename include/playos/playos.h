@@ -9,6 +9,7 @@
 #include "playos/battery.h"
 #include "playos/bluetooth.h"
 #include "playos/capabilities.h"
+#include "playos/device_profile.h"
 #include "playos/display.h"
 #include "playos/input.h"
 #include "playos/lifecycle.h"

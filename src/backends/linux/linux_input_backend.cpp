@@ -8,6 +8,8 @@
 // This is a Stage-1 backend: it binds the first gamepad it finds. Multi-device
 // handling, hotplug, and libinput integration are future work.
 #include "backends/input_backend.h"
+#include "backends/linux/input_mapping.h"
+#include "playos/device_profile.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -15,8 +17,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace PlayOS {
 namespace Detail {
@@ -30,7 +34,7 @@ bool testBit(const unsigned long* bits, int bit) {
 
 class LinuxInputBackend : public IInputBackend {
 public:
-    LinuxInputBackend() { openGamepad(); }
+    LinuxInputBackend() { openGamepad(); LoadProfile(); }
     ~LinuxInputBackend() override {
         if (fd_ >= 0) close(fd_);
     }
@@ -60,6 +64,7 @@ private:
     void set(Button b, bool v) { buttons_[static_cast<int>(b)] = v; }
 
     void onKey(int code, bool pressed) {
+        // Standard gamepad buttons (same on every device)
         switch (code) {
             case BTN_SOUTH:  set(Button::A, pressed); break;
             case BTN_EAST:   set(Button::B, pressed); break;
@@ -71,17 +76,15 @@ private:
             case BTN_TR2:    set(Button::R2, pressed); break;
             case BTN_SELECT: set(Button::Select, pressed); break;
             case BTN_START:  set(Button::Start, pressed); break;
-            case BTN_MODE:   set(Button::Home, pressed); break;
-            // Vendor-specific buttons (ROG Ally, Steam Deck, etc.).
-            // Armoury / Quick Access Menu / "guide" alternates.
-            case BTN_TRIGGER_HAPPY1:
-            case BTN_TRIGGER_HAPPY2:
-            case BTN_TRIGGER_HAPPY3:
-            case BTN_TRIGGER_HAPPY4:
-            case KEY_PROG1:   set(Button::Home, pressed); break;
-            case KEY_PROG2:   set(Button::QuickSettings, pressed); break;
             default: break;
         }
+
+        // Profile-resolved vendor buttons (Home, QuickSettings).
+        // Resolved from symbolic names in the device profile via InputMapping.
+        if (std::find(m_homeCodes.begin(), m_homeCodes.end(), code) != m_homeCodes.end())
+            set(Button::Home, pressed);
+        if (std::find(m_qsCodes.begin(), m_qsCodes.end(), code) != m_qsCodes.end())
+            set(Button::QuickSettings, pressed);
     }
 
     void onAbs(int code, int value) {
@@ -153,10 +156,49 @@ private:
 
     bool Connected() const override { return fd_ >= 0; }
 
+    // ── Profile-aware button mapping ────────────────────────────────────
+
+    void LoadProfile() {
+        // Try to load device profile. Path can be set via kernel cmdline
+        // (playos.profile=) or defaults to the first profile found.
+        const char* profileId = std::getenv("PLAYOS_PROFILE");
+        std::string path;
+        if (profileId && profileId[0]) {
+            path = std::string("/etc/playos/device-profiles/") + profileId + ".toml";
+        } else {
+            // Auto-detect: look for any profile in the directory
+            path = "/etc/playos/device-profiles/default.toml";
+        }
+
+        auto profile = DeviceProfile::Load(path);
+        if (!profile) {
+            // No profile found — use hardcoded defaults
+            m_homeCodes = {BTN_MODE, BTN_TRIGGER_HAPPY1, BTN_TRIGGER_HAPPY2,
+                           BTN_TRIGGER_HAPPY3, BTN_TRIGGER_HAPPY4, KEY_PROG1};
+            m_qsCodes   = {KEY_PROG2};
+            return;
+        }
+
+        // Resolve symbolic names → evdev codes via InputMapping
+        if (!profile->input().homeButton.empty())
+            m_homeCodes = Detail::ResolveInputCode(profile->input().homeButton);
+        if (!profile->input().quickSettingsButton.empty())
+            m_qsCodes   = Detail::ResolveInputCode(profile->input().quickSettingsButton);
+
+        // Fallback: if symbolic name wasn't recognized, use hardcoded defaults
+        if (m_homeCodes.empty())
+            m_homeCodes = {BTN_MODE, BTN_TRIGGER_HAPPY1, BTN_TRIGGER_HAPPY2,
+                           BTN_TRIGGER_HAPPY3, BTN_TRIGGER_HAPPY4, KEY_PROG1};
+        if (m_qsCodes.empty())
+            m_qsCodes = {KEY_PROG2};
+    }
+
     int fd_ = -1;
     bool buttons_[static_cast<int>(Button::Count)] = {false};
     float axes_[6] = {0.0f};
     input_absinfo abs_[ABS_MAX + 1] = {};
+    std::vector<int> m_homeCodes;
+    std::vector<int> m_qsCodes;
 };
 
 } // namespace

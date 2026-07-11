@@ -4,15 +4,26 @@ project(playos_platform_api VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(FetchContent)
+
+# ── tomlplusplus (header-only TOML parser for device profiles) ──────────
+FetchContent_Declare(tomlplusplus
+    GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
+    GIT_TAG v3.4.0)
+FetchContent_MakeAvailable(tomlplusplus)
+
 # ── core library (engine-agnostic, no input backend) ──────────────────────
 #
-# Lifecycle + Capabilities only. Input is provided by a separately-linked
-# backend that the consumer chooses.
+# Lifecycle + Capabilities + Device Profile.
+# Input is provided by a separately-linked backend that the consumer chooses.
 add_library(playos-platform-api
     src/capabilities.cpp
+    src/device_profile.cpp
     src/lifecycle.cpp
 )
 add_library(PlayOS::PlatformAPI ALIAS playos-platform-api)
+
+target_link_libraries(playos-platform-api PUBLIC tomlplusplus::tomlplusplus)
 
 target_include_directories(playos-platform-api PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -66,16 +77,19 @@ if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif()
 
 # evdev backend — Linux only, reads /dev/input/event* directly.
+# Uses DeviceProfile + InputMapping for vendor-button routing (RFC-0006).
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(playos-input-evdev
         src/input.cpp
-        src/backends/linux/linux_input_backend.cpp)
+        src/backends/linux/linux_input_backend.cpp
+        src/backends/linux/input_mapping.cpp)
     add_library(PlayOS::playos-input-evdev ALIAS playos-input-evdev)
     target_include_directories(playos-input-evdev PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>)
     target_include_directories(playos-input-evdev PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(playos-input-evdev PUBLIC playos-platform-api)
     target_compile_definitions(playos-input-evdev PRIVATE PLAYOS_INPUT_EVDEV)
 endif()
 
