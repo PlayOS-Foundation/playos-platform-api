@@ -52,15 +52,15 @@ Backends follow an interface+factory pattern (`IBatteryBackend`,
 > Spec: [`rfcs/0006-device-profile-format.md`](https://github.com/PlayOS-Foundation/playos-spec/blob/main/rfcs/0006-device-profile-format.md)
 
 ### TOML integration
-- [ ] Integrate `tomlplusplus` (header-only, CMake FetchContent)
-- [ ] DeviceProfile C++ class — load, validate, expose typed accessors
+- [x] Integrate `tomlplusplus` (header-only, CMake FetchContent)
+- [x] DeviceProfile C++ class — load, validate, expose typed accessors
 
 ### Input mapping
-- [ ] `InputMapping` lookup table: symbolic names → Linux evdev key codes
+- [x] `InputMapping` lookup table: symbolic names → Linux evdev key codes
   - Vocabulary: `asus_armoury`, `asus_command_center`, `steamdeck_qam`,
     `xbox_guide`, `legion_quick`, etc.
-- [ ] Profile-aware `CreateInputBackend(profilePath)` — uses profile for
-      button mapping; falls back to hardcoded defaults if no profile found
+- [x] Profile-aware `CreateInputBackend()` — resolves profile button names
+      via `InputMapping`; falls back to hardcoded defaults if no profile
 - [ ] Profile-aware `CreateBatteryBackend(profilePath)` — skips battery
       polling if profile says `"power.battery" = false`
 
