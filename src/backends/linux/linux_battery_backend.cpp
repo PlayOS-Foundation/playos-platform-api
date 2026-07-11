@@ -5,7 +5,9 @@
 #include "backends/battery_backend.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #include <dirent.h>
 
 namespace PlayOS {
