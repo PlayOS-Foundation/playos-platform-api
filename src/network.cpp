@@ -20,5 +20,13 @@ namespace Network {
 WiFiState GetWiFiState() { return network_backend()->GetWiFiState(); }
 const char* PrimaryIP()  { return network_backend()->PrimaryIP(); }
 
+std::vector<WiFiNetwork> ScanNetworks() {
+    return network_backend()->ScanNetworks();
+}
+
+ConnectResult Connect(const std::string& ssid, const std::string& psk) {
+    return network_backend()->Connect(ssid, psk);
+}
+
 } // namespace Network
 } // namespace PlayOS

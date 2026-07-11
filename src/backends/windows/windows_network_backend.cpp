@@ -61,6 +61,13 @@ public:
         return "";
     }
 
+    // WiFi scan and connect via Windows WLAN API — stub for now.
+    // TODO: implement using WlanEnumInterfaces / WlanGetAvailableNetworkList.
+    std::vector<Network::WiFiNetwork> ScanNetworks() override { return {}; }
+    Network::ConnectResult Connect(const std::string&, const std::string&) override {
+        return Network::ConnectResult::Error;
+    }
+
 private:
     std::string m_ip;
 
