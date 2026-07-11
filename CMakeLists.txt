@@ -123,6 +123,22 @@ target_include_directories(playos-display-null PUBLIC
 target_include_directories(playos-display-null PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# Linux backend — reads screen size from Raylib (post-compositor configure),
+# supports PLAYOS_SAFE_AREA_* env vars for device-profile safe area insets.
+# Only built when raylib is available.
+if(TARGET raylib AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(playos-display-linux
+        src/display.cpp
+        src/backends/linux/linux_display_backend.cpp)
+    add_library(PlayOS::playos-display-linux ALIAS playos-display-linux)
+    target_include_directories(playos-display-linux PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-display-linux PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(playos-display-linux PUBLIC raylib)
+endif()
+
 # ── storage backends (link-time choice) ───────────────────────────────────
 #
 # The consumer picks one backend:
