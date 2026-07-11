@@ -274,3 +274,55 @@ target_include_directories(playos-battery-null PUBLIC
     $<INSTALL_INTERFACE:include>)
 target_include_directories(playos-battery-null PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ── network backends (link-time choice) ────────────────────────────────────
+#   playos-network-linux   ifaddrs WiFi state + primary IP (Linux only)
+#   playos-network-null    always returns Unknown / empty string
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(playos-network-linux
+        src/network.cpp
+        src/backends/linux/linux_network_backend.cpp)
+    add_library(PlayOS::playos-network-linux ALIAS playos-network-linux)
+    target_include_directories(playos-network-linux PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-network-linux PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
+
+add_library(playos-network-null
+    src/network.cpp
+    src/backends/null/null_network_backend.cpp)
+add_library(PlayOS::playos-network-null ALIAS playos-network-null)
+target_include_directories(playos-network-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-network-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ── bluetooth backends (link-time choice) ──────────────────────────────────
+#   playos-bluetooth-linux   reads /sys/class/bluetooth/ (Linux only)
+#   playos-bluetooth-null    always returns false
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(playos-bluetooth-linux
+        src/bluetooth.cpp
+        src/backends/linux/linux_bluetooth_backend.cpp)
+    add_library(PlayOS::playos-bluetooth-linux ALIAS playos-bluetooth-linux)
+    target_include_directories(playos-bluetooth-linux PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-bluetooth-linux PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
+
+add_library(playos-bluetooth-null
+    src/bluetooth.cpp
+    src/backends/null/null_bluetooth_backend.cpp)
+add_library(PlayOS::playos-bluetooth-null ALIAS playos-bluetooth-null)
+target_include_directories(playos-bluetooth-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-bluetooth-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)

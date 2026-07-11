@@ -7,10 +7,12 @@
 
 #include "playos/audio.h"
 #include "playos/battery.h"
+#include "playos/bluetooth.h"
 #include "playos/capabilities.h"
 #include "playos/display.h"
 #include "playos/input.h"
 #include "playos/lifecycle.h"
+#include "playos/network.h"
 #include "playos/storage.h"
 #include "playos/touch.h"
 

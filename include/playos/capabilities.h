@@ -22,6 +22,8 @@ enum class Capability {
     Touch,
     Battery,
     Brightness,
+    NetworkInfo,      // PlayOS::Network::GetWiFiState / PrimaryIP
+    BluetoothPresent, // PlayOS::Bluetooth::IsPresent
     CloudSave,
     Overlay,
     Marketplace,
@@ -41,6 +43,10 @@ std::vector<Capability> List();
 // Returns the stable namespaced identifier for a capability,
 // e.g. Capability::InputBasic -> "input.basic".
 const char* Id(Capability capability);
+
+// Called by backend libraries to self-register a capability at startup.
+// Application code should NOT call this directly.
+void RegisterCapability(Capability capability);
 
 } // namespace Capabilities
 } // namespace PlayOS
