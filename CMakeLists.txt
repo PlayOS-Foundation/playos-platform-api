@@ -248,8 +248,22 @@ target_include_directories(playos-touch-null PRIVATE
 # ── battery backends (link-time choice) ────────────────────────────────────
 #
 # The consumer picks one backend:
-#   playos-battery-linux   reads /sys/class/power_supply/ (Linux only)
-#   playos-battery-null    reports no battery (placeholder, always available)
+#   playos-battery-windows  GetSystemPowerStatus() (Windows only)
+#   playos-battery-linux    reads /sys/class/power_supply/ (Linux only)
+#   playos-battery-null     reports no battery (placeholder, always available)
+
+# Windows backend — uses GetSystemPowerStatus().
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_library(playos-battery-windows
+        src/battery.cpp
+        src/backends/windows/windows_battery_backend.cpp)
+    add_library(PlayOS::playos-battery-windows ALIAS playos-battery-windows)
+    target_include_directories(playos-battery-windows PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-battery-windows PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
 
 # Linux backend — reads /sys/class/power_supply/ sysfs.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -276,8 +290,21 @@ target_include_directories(playos-battery-null PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # ── network backends (link-time choice) ────────────────────────────────────
-#   playos-network-linux   ifaddrs WiFi state + primary IP (Linux only)
-#   playos-network-null    always returns Unknown / empty string
+#   playos-network-windows  GetAdaptersAddresses() (Windows only)
+#   playos-network-linux    ifaddrs WiFi state + primary IP (Linux only)
+#   playos-network-null     always returns Unknown / empty string
+
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_library(playos-network-windows
+        src/network.cpp
+        src/backends/windows/windows_network_backend.cpp)
+    add_library(PlayOS::playos-network-windows ALIAS playos-network-windows)
+    target_include_directories(playos-network-windows PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-network-windows PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(playos-network-linux
@@ -302,8 +329,21 @@ target_include_directories(playos-network-null PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # ── bluetooth backends (link-time choice) ──────────────────────────────────
-#   playos-bluetooth-linux   reads /sys/class/bluetooth/ (Linux only)
-#   playos-bluetooth-null    always returns false
+#   playos-bluetooth-windows  BluetoothFindFirstRadio() (Windows only)
+#   playos-bluetooth-linux    reads /sys/class/bluetooth/ (Linux only)
+#   playos-bluetooth-null     always returns false
+
+if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_library(playos-bluetooth-windows
+        src/bluetooth.cpp
+        src/backends/windows/windows_bluetooth_backend.cpp)
+    add_library(PlayOS::playos-bluetooth-windows ALIAS playos-bluetooth-windows)
+    target_include_directories(playos-bluetooth-windows PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-bluetooth-windows PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(playos-bluetooth-linux
