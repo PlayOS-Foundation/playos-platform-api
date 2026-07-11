@@ -6,6 +6,7 @@
 #pragma once
 
 #include "playos/audio.h"
+#include "playos/battery.h"
 #include "playos/capabilities.h"
 #include "playos/display.h"
 #include "playos/input.h"

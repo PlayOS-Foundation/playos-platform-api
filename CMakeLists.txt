@@ -228,3 +228,33 @@ target_include_directories(playos-touch-null PUBLIC
     $<INSTALL_INTERFACE:include>)
 target_include_directories(playos-touch-null PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ── battery backends (link-time choice) ────────────────────────────────────
+#
+# The consumer picks one backend:
+#   playos-battery-linux   reads /sys/class/power_supply/ (Linux only)
+#   playos-battery-null    reports no battery (placeholder, always available)
+
+# Linux backend — reads /sys/class/power_supply/ sysfs.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(playos-battery-linux
+        src/battery.cpp
+        src/backends/linux/linux_battery_backend.cpp)
+    add_library(PlayOS::playos-battery-linux ALIAS playos-battery-linux)
+    target_include_directories(playos-battery-linux PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+    target_include_directories(playos-battery-linux PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
+
+# Null backend — always available, reports no battery.
+add_library(playos-battery-null
+    src/battery.cpp
+    src/backends/null/null_battery_backend.cpp)
+add_library(PlayOS::playos-battery-null ALIAS playos-battery-null)
+target_include_directories(playos-battery-null PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_include_directories(playos-battery-null PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -1,4 +1,5 @@
 #include "playos/capabilities.h"
+#include "playos/battery.h"
 
 #include <algorithm>
 
@@ -6,16 +7,23 @@ namespace PlayOS {
 namespace Capabilities {
 namespace {
 
-// The set of capabilities this build reports. For the Windows SDK target the
-// baseline required capabilities are provided. Runtime devices and richer
-// backends will extend this registry (see playos-spec RFC-0003).
+// The set of capabilities this build reports. Required capabilities are always
+// present. Optional capabilities (Battery, etc.) are probed at first call.
+// See playos-spec RFC-0003.
 const std::vector<Capability>& registry() {
-    static const std::vector<Capability> caps = {
-        Capability::InputBasic,
-        Capability::StorageLocal,
-        Capability::DisplayInfo,
-        Capability::LifecycleBasic,
-    };
+    static std::vector<Capability> caps = []() {
+        std::vector<Capability> c = {
+            Capability::InputBasic,
+            Capability::StorageLocal,
+            Capability::DisplayInfo,
+            Capability::LifecycleBasic,
+        };
+        // Battery: present when the platform reports a valid charge level.
+        if (Battery::Level() >= 0.0f) {
+            c.push_back(Capability::Battery);
+        }
+        return c;
+    }();
     return caps;
 }
 
