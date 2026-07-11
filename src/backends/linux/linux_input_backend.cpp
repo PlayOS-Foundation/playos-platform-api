@@ -72,6 +72,14 @@ private:
             case BTN_SELECT: set(Button::Select, pressed); break;
             case BTN_START:  set(Button::Start, pressed); break;
             case BTN_MODE:   set(Button::Home, pressed); break;
+            // Vendor-specific buttons (ROG Ally, Steam Deck, etc.).
+            // Armoury / Quick Access Menu / "guide" alternates.
+            case BTN_TRIGGER_HAPPY1:
+            case BTN_TRIGGER_HAPPY2:
+            case BTN_TRIGGER_HAPPY3:
+            case BTN_TRIGGER_HAPPY4:
+            case KEY_PROG1:   set(Button::Home, pressed); break;
+            case KEY_PROG2:   set(Button::QuickSettings, pressed); break;
             default: break;
         }
     }
