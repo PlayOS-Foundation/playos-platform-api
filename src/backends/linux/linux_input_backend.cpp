@@ -76,6 +76,11 @@ private:
             case BTN_TR2:    set(Button::R2, pressed); break;
             case BTN_SELECT: set(Button::Select, pressed); break;
             case BTN_START:  set(Button::Start, pressed); break;
+            // Some drivers (xpad on certain kernels) report D-Pad as buttons
+            case BTN_DPAD_UP:    set(Button::DPadUp, pressed); break;
+            case BTN_DPAD_DOWN:  set(Button::DPadDown, pressed); break;
+            case BTN_DPAD_LEFT:  set(Button::DPadLeft, pressed); break;
+            case BTN_DPAD_RIGHT: set(Button::DPadRight, pressed); break;
             default: break;
         }
 
@@ -108,11 +113,17 @@ private:
     }
 
     // Normalize a stick axis to [-1, 1] using the device's reported range.
+    // Applies a 15% deadzone to filter out resting noise.
     float normStick(int code, int value) const {
         const auto& a = abs_[code];
         if (a.maximum == a.minimum) return 0.0f;
         const float t = (float)(value - a.minimum) / (float)(a.maximum - a.minimum);
-        return t * 2.0f - 1.0f;
+        float v = t * 2.0f - 1.0f;
+        // Deadzone: squash values within ±deadzone to zero, rescale outer range
+        constexpr float deadzone = 0.15f;
+        if (v > -deadzone && v < deadzone) return 0.0f;
+        if (v > 0.0f) return (v - deadzone) / (1.0f - deadzone);
+        return (v + deadzone) / (1.0f - deadzone);
     }
 
     // Normalize a trigger axis to [0, 1].
