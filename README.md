@@ -15,7 +15,7 @@ Early scaffold. Currently provides a minimal vertical-slice surface:
 
 - **Capabilities** — `PlayOS::Capabilities::Has/List/Id` (RFC-0003).
 - **Input** — logical buttons/axes via `PlayOS::Input` (XInput backend on
-  Windows, null backend elsewhere).
+  Windows, evdev/libinput backend on Linux, null backend elsewhere).
 - **Lifecycle** — `PlayOS::Lifecycle::Init/Update/Shutdown`.
 
 ## Layout
