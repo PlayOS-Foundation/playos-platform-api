@@ -34,20 +34,33 @@ bool testBit(const unsigned long* bits, int bit) {
 
 class LinuxInputBackend : public IInputBackend {
 public:
-    LinuxInputBackend() { openGamepad(); LoadProfile(); }
+    LinuxInputBackend() { openDevices(); LoadProfile(); }
     ~LinuxInputBackend() override {
         if (fd_ >= 0) close(fd_);
+        if (homeFd_ >= 0) close(homeFd_);
     }
 
     void Update() override {
-        if (fd_ < 0) return;
         input_event ev;
         ssize_t n;
-        while ((n = read(fd_, &ev, sizeof(ev))) == (ssize_t)sizeof(ev)) {
-            if (ev.type == EV_KEY) {
-                onKey(ev.code, ev.value != 0);
-            } else if (ev.type == EV_ABS) {
-                onAbs(ev.code, ev.value);
+
+        // Read main gamepad device (axes + buttons)
+        if (fd_ >= 0) {
+            while ((n = read(fd_, &ev, sizeof(ev))) == (ssize_t)sizeof(ev)) {
+                if (ev.type == EV_KEY) {
+                    onKey(ev.code, ev.value != 0);
+                } else if (ev.type == EV_ABS) {
+                    onAbs(ev.code, ev.value);
+                }
+            }
+        }
+
+        // Read separate home-button device (only EV_KEY, no axes)
+        if (homeFd_ >= 0) {
+            while ((n = read(homeFd_, &ev, sizeof(ev))) == (ssize_t)sizeof(ev)) {
+                if (ev.type == EV_KEY) {
+                    onKey(ev.code, ev.value != 0);
+                }
             }
         }
     }
@@ -133,10 +146,15 @@ private:
         return (float)(value - a.minimum) / (float)(a.maximum - a.minimum);
     }
 
-    void openGamepad() {
+    // Open main gamepad device AND the separate home-button device.
+    // On devices like ROG Ally, the Xbox Guide button is on a different
+    // /dev/input/event* node than the gamepad axes/buttons.
+    void openDevices() {
         DIR* dir = opendir("/dev/input");
         if (!dir) return;
         dirent* entry;
+
+        // Pass 1: find main gamepad (must have BTN_SOUTH).
         while ((entry = readdir(dir)) != nullptr) {
             if (std::strncmp(entry->d_name, "event", 5) != 0) continue;
             const std::string path = std::string("/dev/input/") + entry->d_name;
@@ -148,6 +166,24 @@ private:
                 testBit(keybits, BTN_SOUTH)) {
                 fd_ = fd;
                 cacheAbsInfo();
+                break;
+            }
+            close(fd);
+        }
+
+        // Pass 2: find home-button device (has BTN_MODE but NOT BTN_SOUTH —
+        // the latter avoids re-opening the main gamepad).
+        rewinddir(dir);
+        while ((entry = readdir(dir)) != nullptr) {
+            if (std::strncmp(entry->d_name, "event", 5) != 0) continue;
+            const std::string path = std::string("/dev/input/") + entry->d_name;
+            const int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+            if (fd < 0) continue;
+
+            unsigned long keybits[(KEY_MAX / (8 * sizeof(unsigned long))) + 1] = {0};
+            if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits) >= 0 &&
+                testBit(keybits, BTN_MODE) && !testBit(keybits, BTN_SOUTH)) {
+                homeFd_ = fd;
                 break;
             }
             close(fd);
@@ -205,6 +241,7 @@ private:
     }
 
     int fd_ = -1;
+    int homeFd_ = -1;   // separate device for Home/Guide button (ROG Ally etc.)
     bool buttons_[static_cast<int>(Button::Count)] = {false};
     float axes_[6] = {0.0f};
     input_absinfo abs_[ABS_MAX + 1] = {};
