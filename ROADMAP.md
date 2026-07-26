@@ -69,6 +69,22 @@ Backends follow an interface+factory pattern (`IBatteryBackend`,
       product name, then fallback to generic
 - [ ] Profile path: `/etc/playos/device-profiles/<id>.toml`
 
+### ROG Ally driver availability (kernel 7.1.4)
+
+The `feat/kernel-stable-rog-ally` branch in `playos-refdistro` switches
+Alpine from `linux-lts` (6.18) to `linux-stable` (7.1.4), unlocking drivers
+that were previously unavailable:
+
+| Driver | Kernel | Provides | Status |
+|---|---|---|---|
+| `asus-wmi` | 6.6+ | TDP, fan curves, GPU switching | ✅ Already in 6.18 |
+| `asus-armoury` | 6.19+ | Advanced TDP (core count, APU memory, dGPU TGP) | ✅ Now in 7.1.4 |
+| `hid-asus-ally` | out-of-tree | Back paddles (M1/M2), gyro, Crate/CC buttons | ✅ Built as `.ko` |
+
+These drivers are accessed via sysfs (`/sys/devices/platform/asus-armoury/`)
+and HID input events.  The `InputBackend` and future `Fan`/`TDP` backends
+can now target these interfaces for ROG Ally hardware support.
+
 ### API safety
 - [ ] **Document blocking API as main-thread-unsafe** — `Network::ScanNetworks()`
   and `Network::Connect()` (the legacy blocking wrappers) are safe only on
