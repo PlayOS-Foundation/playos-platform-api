@@ -38,6 +38,7 @@ public:
     ~LinuxInputBackend() override {
         if (fd_ >= 0) close(fd_);
         if (homeFd_ >= 0) close(homeFd_);
+        if (vendorFd_ >= 0) close(vendorFd_);
     }
 
     void Update() override {
@@ -58,6 +59,17 @@ public:
         // Read separate home-button device (only EV_KEY, no axes)
         if (homeFd_ >= 0) {
             while ((n = read(homeFd_, &ev, sizeof(ev))) == (ssize_t)sizeof(ev)) {
+                if (ev.type == EV_KEY) {
+                    onKey(ev.code, ev.value != 0);
+                }
+            }
+        }
+
+        // Read vendor-specific button device (hid-asus-ally, etc.).
+        // These buttons (Armoury Crate, Command Center, back paddles)
+        // appear on a separate HID interface from the main Xbox gamepad.
+        if (vendorFd_ >= 0) {
+            while ((n = read(vendorFd_, &ev, sizeof(ev))) == (ssize_t)sizeof(ev)) {
                 if (ev.type == EV_KEY) {
                     onKey(ev.code, ev.value != 0);
                 }
@@ -188,6 +200,32 @@ private:
             }
             close(fd);
         }
+
+        // Pass 3: find vendor-specific button device (hid-asus-ally etc.).
+        // On ROG Ally, the Armoury Crate (KEY_PROG1), Command Center
+        // (KEY_PROG2), and back paddles (BTN_TRIGGER_HAPPY1/2) appear on a
+        // separate HID interface that is neither the Xbox gamepad (no
+        // BTN_SOUTH) nor the Xbox guide button (no BTN_MODE).
+        rewinddir(dir);
+        while ((entry = readdir(dir)) != nullptr) {
+            if (std::strncmp(entry->d_name, "event", 5) != 0) continue;
+            const std::string path = std::string("/dev/input/") + entry->d_name;
+            const int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+            if (fd < 0) continue;
+
+            unsigned long keybits[(KEY_MAX / (8 * sizeof(unsigned long))) + 1] = {0};
+            if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits) >= 0) {
+                bool hasVendorKeys = testBit(keybits, KEY_PROG1) ||
+                                     testBit(keybits, BTN_TRIGGER_HAPPY1);
+                bool isMainGamepad = testBit(keybits, BTN_SOUTH);
+                bool isHomeDevice  = testBit(keybits, BTN_MODE);
+                if (hasVendorKeys && !isMainGamepad && !isHomeDevice) {
+                    vendorFd_ = fd;
+                    break;
+                }
+            }
+            close(fd);
+        }
         closedir(dir);
     }
 
@@ -242,6 +280,7 @@ private:
 
     int fd_ = -1;
     int homeFd_ = -1;   // separate device for Home/Guide button (ROG Ally etc.)
+    int vendorFd_ = -1; // hid-asus-ally extra buttons (Crate, CC, M1/M2)
     bool buttons_[static_cast<int>(Button::Count)] = {false};
     float axes_[6] = {0.0f};
     input_absinfo abs_[ABS_MAX + 1] = {};
