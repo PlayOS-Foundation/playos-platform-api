@@ -133,6 +133,13 @@ public:
             }
             return r;
         };
+
+        // Delete any stale connection profile for this SSID so a failed
+        // first attempt (wrong password) doesn't poison subsequent retries.
+        // nmcli reuses the existing profile instead of creating a fresh one,
+        // which causes immediate failure on retry with the correct password.
+        RunCmd(("nmcli connection delete id '" + esc(ssid) + "' 2>/dev/null").c_str());
+
         std::string cmd = "nmcli device wifi connect '" + esc(ssid) + "'";
         if (!psk.empty()) cmd += " password '" + esc(psk) + "'";
         cmd += " 2>&1";
