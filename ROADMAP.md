@@ -69,6 +69,13 @@ Backends follow an interface+factory pattern (`IBatteryBackend`,
       product name, then fallback to generic
 - [ ] Profile path: `/etc/playos/device-profiles/<id>.toml`
 
+### API safety
+- [ ] **Document blocking API as main-thread-unsafe** — `Network::ScanNetworks()`
+  and `Network::Connect()` (the legacy blocking wrappers) are safe only on
+  background threads.  Callers on the main/UI thread must use the async
+  `StartScan`/`PollScan`/`StartConnect`/`PollConnect` API instead.
+  Add Doxygen `\\warning` annotations.
+
 ---
 
 ## 📋 Planned — Phase 3 (New APIs)
