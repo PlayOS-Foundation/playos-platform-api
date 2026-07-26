@@ -10,9 +10,21 @@ class NullNetworkBackend : public INetworkBackend {
 public:
     Network::WiFiState GetWiFiState() override { return Network::WiFiState::Unknown; }
     const char* PrimaryIP() override { return ""; }
+
     std::vector<Network::WiFiNetwork> ScanNetworks() override { return {}; }
     Network::ConnectResult Connect(const std::string&, const std::string&) override {
         return Network::ConnectResult::Error;
+    }
+
+    void StartScan() override {}
+    bool PollScan(std::vector<Network::WiFiNetwork>& out) override {
+        out.clear();
+        return true;
+    }
+    void StartConnect(const std::string&, const std::string&) override {}
+    bool PollConnect(Network::ConnectResult& out) override {
+        out = Network::ConnectResult::Error;
+        return true;
     }
 };
 

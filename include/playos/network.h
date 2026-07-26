@@ -45,6 +45,8 @@ WiFiState GetWiFiState();
 // The returned pointer is valid until the next call to PrimaryIP().
 const char* PrimaryIP();
 
+// ── Blocking (legacy — will block for 2–15 seconds) ───────────────────────
+
 // Scans for nearby WiFi networks. Blocks for a few seconds.
 // Returns an empty vector when no wireless hardware is present.
 std::vector<WiFiNetwork> ScanNetworks();
@@ -52,6 +54,26 @@ std::vector<WiFiNetwork> ScanNetworks();
 // Connect to an SSID with an optional PSK (pass empty string for open networks).
 // Blocks until connected, authentication failure, or timeout (~15 s).
 ConnectResult Connect(const std::string& ssid, const std::string& psk);
+
+// ── Non-blocking (preferred — never blocks the main thread) ───────────────
+
+// Start a background WiFi scan. No-op if a scan is already running.
+// Call PollScan() each frame until it returns true.
+void StartScan();
+
+// Returns true when the scan completes, populating `out` with results.
+// After returning true the results are consumed; subsequent calls return false
+// until a new StartScan() is issued.
+bool PollScan(std::vector<WiFiNetwork>& out);
+
+// Start a background WiFi connect. No-op if an operation is already running.
+// Call PollConnect() each frame until it returns true.
+void StartConnect(const std::string& ssid, const std::string& psk);
+
+// Returns true when the connect completes, populating `out` with the result.
+// After returning true the result is consumed; subsequent calls return false
+// until a new StartConnect() is issued.
+bool PollConnect(ConnectResult& out);
 
 } // namespace Network
 } // namespace PlayOS
