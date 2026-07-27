@@ -287,13 +287,16 @@ private:
     void LoadProfile() {
         // Try to load device profile. Path can be set via kernel cmdline
         // (playos.profile=) or defaults to the first profile found.
+        // Read from /run/playos/profiles/ (tmpfs) — tomlplusplus segfaults
+        // on content read from ext4/EROFS-backed paths.  The shell uses
+        // the same safe tmpfs path.
         const char* profileId = std::getenv("PLAYOS_PROFILE");
         std::string path;
         if (profileId && profileId[0]) {
-            path = std::string("/etc/playos/device-profiles/") + profileId + ".toml";
+            path = std::string("/run/playos/profiles/") + profileId + ".toml";
         } else {
             // Auto-detect: look for any profile in the directory
-            path = "/etc/playos/device-profiles/default.toml";
+            path = "/run/playos/profiles/default.toml";
         }
 
         auto profile = DeviceProfile::Load(path);
