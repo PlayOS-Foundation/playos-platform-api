@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -39,6 +40,7 @@ public:
         if (fd_ >= 0) close(fd_);
         if (homeFd_ >= 0) close(homeFd_);
         if (vendorFd_ >= 0) close(vendorFd_);
+        if (traceFile_) fclose(traceFile_);
     }
 
     void Update() override {
@@ -89,6 +91,9 @@ private:
     void set(Button b, bool v) { buttons_[static_cast<int>(b)] = v; }
 
     void onKey(int code, bool pressed) {
+        // Trace ALL key events for debugging — write to /tmp/playos-input.log
+        traceKey(code, pressed);
+
         // Standard gamepad buttons (same on every device)
         switch (code) {
             case BTN_SOUTH:  set(Button::A, pressed); break;
@@ -243,6 +248,42 @@ private:
 
     // ── Profile-aware button mapping ────────────────────────────────────
 
+    void traceKey(int code, bool pressed) {
+        if (!pressed) return; // only log press-down, not release
+        if (!traceFile_) {
+            traceFile_ = fopen("/tmp/playos-input.log", "a");
+            if (!traceFile_) return;
+        }
+        const char* name = "?";
+        // Map common evdev codes to human-readable names
+        switch (code) {
+            case BTN_SOUTH:  name = "BTN_SOUTH(A)"; break;
+            case BTN_EAST:   name = "BTN_EAST(B)"; break;
+            case BTN_WEST:   name = "BTN_WEST(X)"; break;
+            case BTN_NORTH:  name = "BTN_NORTH(Y)"; break;
+            case BTN_TL:     name = "BTN_TL(L1)"; break;
+            case BTN_TR:     name = "BTN_TR(R1)"; break;
+            case BTN_TL2:    name = "BTN_TL2(L2)"; break;
+            case BTN_TR2:    name = "BTN_TR2(R2)"; break;
+            case BTN_SELECT: name = "BTN_SELECT"; break;
+            case BTN_START:  name = "BTN_START"; break;
+            case BTN_MODE:   name = "BTN_MODE"; break;
+            case BTN_DPAD_UP:    name = "BTN_DPAD_UP"; break;
+            case BTN_DPAD_DOWN:  name = "BTN_DPAD_DOWN"; break;
+            case BTN_DPAD_LEFT:  name = "BTN_DPAD_LEFT"; break;
+            case BTN_DPAD_RIGHT: name = "BTN_DPAD_RIGHT"; break;
+            case BTN_TRIGGER_HAPPY1: name = "BTN_TRIGGER_HAPPY1(M1)"; break;
+            case BTN_TRIGGER_HAPPY2: name = "BTN_TRIGGER_HAPPY2(M2)"; break;
+            case BTN_TRIGGER_HAPPY3: name = "BTN_TRIGGER_HAPPY3"; break;
+            case BTN_TRIGGER_HAPPY4: name = "BTN_TRIGGER_HAPPY4"; break;
+            case KEY_PROG1: name = "KEY_PROG1(ArmouryCrate)"; break;
+            case KEY_PROG2: name = "KEY_PROG2(CmdCenter)"; break;
+            default: break;
+        }
+        fprintf(traceFile_, "%d %s\n", code, name);
+        fflush(traceFile_); // flush every line so SSH tail works instantly
+    }
+
     void LoadProfile() {
         // Try to load device profile. Path can be set via kernel cmdline
         // (playos.profile=) or defaults to the first profile found.
@@ -281,6 +322,7 @@ private:
     int fd_ = -1;
     int homeFd_ = -1;   // separate device for Home/Guide button (ROG Ally etc.)
     int vendorFd_ = -1; // hid-asus-ally extra buttons (Crate, CC, M1/M2)
+    FILE* traceFile_ = nullptr; // /tmp/playos-input.log for button tracing
     bool buttons_[static_cast<int>(Button::Count)] = {false};
     float axes_[6] = {0.0f};
     input_absinfo abs_[ABS_MAX + 1] = {};
