@@ -5,6 +5,7 @@
 
 #include <arpa/inet.h>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <ifaddrs.h>
@@ -118,7 +119,29 @@ public:
     // ── Blocking (legacy) ─────────────────────────────────────────────────
 
     std::vector<Network::WiFiNetwork> ScanNetworks() override {
+        // Check if any WiFi device is available before scanning.
+        std::string devStatus = RunCmd(
+            "nmcli -t -f TYPE,DEVICE device status 2>/dev/null");
+        if (devStatus.find("wifi:") == std::string::npos) {
+            // No WiFi device — skip scan, return empty.
+            return {};
+        }
+
+        // Trigger a rescan. nmcli returns immediately while the scan runs
+        // in the background, so we must poll until results appear.
         RunCmd("nmcli device wifi rescan 2>/dev/null");
+
+        // Poll for scan results up to 5 seconds (10 × 500ms).
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            auto nets = ParseWiFiList(
+                RunCmd("nmcli --escape no -t -f SSID,SIGNAL,SECURITY,ACTIVE "
+                       "device wifi list 2>/dev/null"));
+            if (!nets.empty())
+                return nets;
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+
+        // Last attempt — return whatever we have (even if empty).
         return ParseWiFiList(
             RunCmd("nmcli --escape no -t -f SSID,SIGNAL,SECURITY,ACTIVE "
                    "device wifi list 2>/dev/null"));
