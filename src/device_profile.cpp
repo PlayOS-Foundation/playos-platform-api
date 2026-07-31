@@ -43,36 +43,43 @@ std::optional<DeviceProfile> DeviceProfile::Load(const std::string& path) {
         }
 
         // ── [device] (required) ─────────────────────────────────────────────
-        auto* dev = root["device"].as_table();
-        if (!dev) return std::nullopt;
+        // Use node_view chaining (root["a"]["b"]) — it is null-safe for
+        // missing keys.  table::get(key) returns nullptr when the key is
+        // absent, so the get(key)->value_or(...) pattern segfaults on any
+        // missing key (e.g. safe_area_insets absent from a profile).
+        auto dev = root["device"];
+        if (!dev.is_table()) return std::nullopt;
 
         DeviceProfile p;
 
-        p.m_device.id         = dev->get("id")->value_or("");
-        p.m_device.name       = dev->get("name")->value_or("");
-        p.m_device.targetType = dev->get("targetType")->value_or("runtime-device");
+        p.m_device.id         = dev["id"].value_or("");
+        p.m_device.name       = dev["name"].value_or("");
+        p.m_device.targetType = dev["targetType"].value_or("runtime-device");
         if (p.m_device.id.empty() || p.m_device.name.empty()) return std::nullopt;
 
         // ── [input] (optional — runtime devices only) ──────────────────────
-        if (auto* input = root["input"].as_table()) {
-            p.m_input.homeButton          = input->get("home_button")->value_or("");
-            p.m_input.quickSettingsButton = input->get("quick_settings_button")->value_or("");
-            p.m_input.builtInControls     = input->get("built_in_controls")->value_or("");
-            p.m_input.touchscreen         = input->get("touchscreen")->value_or("");
+        auto input = root["input"];
+        if (input.is_table()) {
+            p.m_input.homeButton          = input["home_button"].value_or("");
+            p.m_input.quickSettingsButton = input["quick_settings_button"].value_or("");
+            p.m_input.builtInControls     = input["built_in_controls"].value_or("");
+            p.m_input.touchscreen         = input["touchscreen"].value_or("");
         }
 
         // ── [display] (required) ───────────────────────────────────────────
-        if (auto* disp = root["display"].as_table()) {
-            p.m_display.defaultWidth  = disp->get("default_width")->value_or(1280);
-            p.m_display.defaultHeight = disp->get("default_height")->value_or(720);
-            p.m_display.refreshRate   = disp->get("refresh_rate")->value_or(60);
+        auto disp = root["display"];
+        if (disp.is_table()) {
+            p.m_display.defaultWidth  = disp["default_width"].value_or(1280);
+            p.m_display.defaultHeight = disp["default_height"].value_or(720);
+            p.m_display.refreshRate   = disp["refresh_rate"].value_or(60);
 
-            if (auto* insets = disp->get("safe_area_insets")->as_table()) {
+            auto insets = disp["safe_area_insets"];
+            if (insets.is_table()) {
                 DisplayInfo::Insets i;
-                i.top    = insets->get("top")->value_or(0);
-                i.bottom = insets->get("bottom")->value_or(0);
-                i.left   = insets->get("left")->value_or(0);
-                i.right  = insets->get("right")->value_or(0);
+                i.top    = insets["top"].value_or(0);
+                i.bottom = insets["bottom"].value_or(0);
+                i.left   = insets["left"].value_or(0);
+                i.right  = insets["right"].value_or(0);
                 p.m_display.safeAreaInsets = i;
             }
         }
