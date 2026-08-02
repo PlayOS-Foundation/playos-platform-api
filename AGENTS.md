@@ -5,8 +5,8 @@ This repository contains **libplayos** — the public C ABI that game developers
 ## Specification Reference
 
 Before touching any header or source file, read:
-- [`playos-spec/src/platform-api.md`](https://github.com/your-org/playos-spec/blob/main/src/platform-api.md) — canonical API spec (all signatures, semantics, error codes)
-- [`playos-spec/src/architecture.md`](https://github.com/your-org/playos-spec/blob/main/src/architecture.md) — system context
+- [`playos-spec/src/platform-api.md`](https://github.com/PlayOS-Foundation/playos-spec/blob/main/src/platform-api.md) — canonical API spec (all signatures, semantics, error codes)
+- [`playos-spec/src/architecture.md`](https://github.com/PlayOS-Foundation/playos-spec/blob/main/src/architecture.md) — system context
 
 ## Repository Layout
 

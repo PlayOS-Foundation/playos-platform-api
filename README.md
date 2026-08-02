@@ -33,7 +33,7 @@
 
 ## API Stability
 
-The C ABI is the authoritative compatibility boundary. See [`platform-api.md`](https://github.com/your-org/playos-spec/blob/main/platform-api.md) for the full stability policy.
+The C ABI is the authoritative compatibility boundary. See [`platform-api.md`](https://github.com/PlayOS-Foundation/playos-spec/blob/main/platform-api.md) for the full stability policy.
 
 Current ABI version: **1** (`PLAYOS_API_VERSION = 1`)  
 SONAME: `libplayos.so.0`
@@ -52,4 +52,4 @@ ctest --test-dir build
 
 ## Documentation
 
-Full API reference: [`playos-spec/platform-api.md`](https://github.com/your-org/playos-spec/blob/main/platform-api.md)
+Full API reference: [`playos-spec/platform-api.md`](https://github.com/PlayOS-Foundation/playos-spec/blob/main/platform-api.md)
