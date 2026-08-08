@@ -1,5 +1,7 @@
 # AGENTS.md — playos-platform-api
 
+> **Implementation status:** 🔴 Pre-implementation — contracts defined in `playos-spec`, `CMakeLists.txt` scaffold exists. Source code and headers not yet implemented. This AGENTS.md describes the **target** structure; only build scaffold is present on disk.
+
 This repository contains **libplayos** — the public C ABI that game developers use to interact with the PlayOS runtime. It is the only interface games are allowed to use; they must not call into the compositor, init, or shell directly.
 
 ## Specification Reference
