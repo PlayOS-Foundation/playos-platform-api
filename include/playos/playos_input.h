@@ -17,28 +17,28 @@
 extern "C" {
 #endif
 
-/** Button bitmask flags. OR multiple values to test combinations. */
-typedef enum {
-    PLAYOS_BUTTON_SOUTH       = (1u << 0),  /**< A on Xbox layout */
-    PLAYOS_BUTTON_EAST        = (1u << 1),  /**< B */
-    PLAYOS_BUTTON_WEST        = (1u << 2),  /**< X */
-    PLAYOS_BUTTON_NORTH       = (1u << 3),  /**< Y */
-    PLAYOS_BUTTON_START       = (1u << 4),
-    PLAYOS_BUTTON_SELECT      = (1u << 5),
-    PLAYOS_BUTTON_DPAD_UP     = (1u << 6),
-    PLAYOS_BUTTON_DPAD_DOWN   = (1u << 7),
-    PLAYOS_BUTTON_DPAD_LEFT   = (1u << 8),
-    PLAYOS_BUTTON_DPAD_RIGHT  = (1u << 9),
-    PLAYOS_BUTTON_L1          = (1u << 10),
-    PLAYOS_BUTTON_R1          = (1u << 11),
-    PLAYOS_BUTTON_L3          = (1u << 12), /**< Left stick click */
-    PLAYOS_BUTTON_R3          = (1u << 13), /**< Right stick click */
-    /*
-     * PLAYOS_BUTTON_SYSTEM and PLAYOS_BUTTON_QUICK_MENU exist in the system
-     * but are NEVER delivered to game processes. They are listed here for
-     * documentation purposes only — do not use them in game input handling.
-     */
-} PlayOSButton;
+/** Button bitmask type. OR multiple flags to test combinations. */
+typedef uint32_t playos_button_mask_t;
+
+/** Button bitmask flags. */
+enum {
+    PLAYOS_BUTTON_SOUTH       = 1u << 0,   /**< A on Xbox layout */
+    PLAYOS_BUTTON_EAST        = 1u << 1,   /**< B */
+    PLAYOS_BUTTON_WEST        = 1u << 2,   /**< X */
+    PLAYOS_BUTTON_NORTH       = 1u << 3,   /**< Y */
+    PLAYOS_BUTTON_START       = 1u << 4,
+    PLAYOS_BUTTON_SELECT      = 1u << 5,
+    PLAYOS_BUTTON_SYSTEM      = 1u << 6,   /**< Xbox/Guide button — RESERVED, not delivered to games */
+    PLAYOS_BUTTON_QUICK_MENU  = 1u << 7,   /**< Ally quick-menu button — RESERVED, not delivered to games */
+    PLAYOS_BUTTON_DPAD_UP     = 1u << 8,
+    PLAYOS_BUTTON_DPAD_DOWN   = 1u << 9,
+    PLAYOS_BUTTON_DPAD_LEFT   = 1u << 10,
+    PLAYOS_BUTTON_DPAD_RIGHT  = 1u << 11,
+    PLAYOS_BUTTON_L1          = 1u << 12,
+    PLAYOS_BUTTON_R1          = 1u << 13,
+    PLAYOS_BUTTON_L3          = 1u << 14,  /**< Left stick click */
+    PLAYOS_BUTTON_R3          = 1u << 15,  /**< Right stick click */
+};
 
 /** Axis indices into PlayOSControllerState.axes[]. */
 typedef enum {
@@ -53,9 +53,9 @@ typedef enum {
 
 /** Snapshot of controller state at a point in time. */
 typedef struct {
-    uint32_t buttons;                  /**< Bitmask of PlayOSButton flags currently held */
-    float    axes[PLAYOS_AXIS_COUNT];  /**< Axis values (see PlayOSAxis for ranges) */
-    uint64_t timestamp_us;             /**< Microseconds since system boot */
+    playos_button_mask_t buttons;      /**< Bitmask of button flags currently held */
+    float                axes[PLAYOS_AXIS_COUNT];  /**< Axis values (see PlayOSAxis for ranges) */
+    uint64_t             timestamp_us; /**< Microseconds since system boot */
 } PlayOSControllerState;
 
 /**
@@ -75,9 +75,9 @@ int playos_input_get_controller_state(PlayOSControllerState *state);
  * Convenience helper: returns non-zero if the given button is held.
  */
 static inline int playos_input_button_down(const PlayOSControllerState *state,
-                                           PlayOSButton button)
+                                           playos_button_mask_t button)
 {
-    return (state->buttons & (uint32_t)button) != 0u;
+    return (state->buttons & button) != 0u;
 }
 
 #ifdef __cplusplus
