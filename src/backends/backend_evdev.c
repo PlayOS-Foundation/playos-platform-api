@@ -60,20 +60,6 @@
 /* Dead zone: ignore stick movement below this fraction */
 #define STICK_DEADZONE  0.05f
 
-/* ── Ally controller device paths ────────────────────────────────── */
-
-/*
- * The ROG Ally controller appears under multiple possible paths
- * depending on the kernel driver (xpad vs hid-asus).
- * We scan in priority order.
- */
-static const char *CONTROLLER_PATHS[] = {
-    "/dev/input/by-id/usb-*Xbox*Controller*-event-joystick",
-    "/dev/input/by-id/usb-*ASUS*Controller*-event-joystick",
-    "/dev/input/by-path/platform-*event-joystick",
-    NULL
-};
-
 /* ── Internal state ──────────────────────────────────────────────── */
 
 static int            evdev_fd = -1;
@@ -115,10 +101,12 @@ static const button_map_t BUTTON_MAP[] = {
     { BTN_TL,              PLAYOS_BUTTON_L1          },
     { BTN_TR,              PLAYOS_BUTTON_R1          },
     { BTN_TRIGGER_HAPPY1,  PLAYOS_BUTTON_QUICK_MENU  }, /* Ally quick-menu — reserved */
-    { BTN_DPAD_UP,    PLAYOS_BUTTON_DPAD_UP    },
-    { BTN_DPAD_DOWN,  PLAYOS_BUTTON_DPAD_DOWN  },
-    { BTN_DPAD_LEFT,  PLAYOS_BUTTON_DPAD_LEFT  },
-    { BTN_DPAD_RIGHT, PLAYOS_BUTTON_DPAD_RIGHT },
+    /*
+     * D-pad is handled exclusively via ABS_HAT0X/Y below.
+     * BTN_DPAD_* events are intentionally NOT mapped here:
+     * xpad/hid-asus report both, and ABS_HAT enforces
+     * mutually exclusive directions (LEFT clears RIGHT, etc.).
+     */
 };
 
 /* ── Axis mapping ────────────────────────────────────────────────── */
@@ -176,8 +164,12 @@ static float normalize_trigger(int32_t val, int32_t min, int32_t max)
 
 /* ── Event processing ────────────────────────────────────────────── */
 
+/* Maximum events to drain per call to prevent unbounded blocking */
+#define MAX_EVENTS_PER_CALL 64
+
 /**
- * Drain all pending events from the evdev fd and update internal state.
+ * Drain pending events from the evdev fd and update internal state.
+ * Capped at MAX_EVENTS_PER_CALL to guarantee bounded latency.
  */
 static void drain_events(void)
 {
@@ -185,8 +177,11 @@ static void drain_events(void)
 
     struct input_event ev;
     ssize_t n;
+    int count = 0;
 
-    while ((n = read(evdev_fd, &ev, sizeof(ev))) == sizeof(ev)) {
+    while (count < MAX_EVENTS_PER_CALL
+           && (n = read(evdev_fd, &ev, sizeof(ev))) == sizeof(ev)) {
+        count++;
         size_t i;
 
         switch (ev.type) {
