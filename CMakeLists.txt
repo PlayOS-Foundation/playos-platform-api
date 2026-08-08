@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 project(playos-platform-api
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "PlayOS public libplayos C ABI and engine adapters"
     LANGUAGES C CXX
 )
@@ -32,7 +32,7 @@ target_include_directories(playos
 
 set_target_properties(playos PROPERTIES
     SOVERSION 0
-    VERSION   0.1.0
+    VERSION   0.2.0
     OUTPUT_NAME playos
 )
 

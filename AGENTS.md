@@ -1,6 +1,6 @@
 # AGENTS.md — playos-platform-api
 
-> **Implementation status:** 🔴 Pre-implementation — contracts defined in `playos-spec`, `CMakeLists.txt` scaffold exists. Source code and headers not yet implemented. This AGENTS.md describes the **target** structure; only build scaffold is present on disk.
+> **Implementation status:** 🟡 Partial implementation — all public headers exist with full declarations, source stubs exist for all modules (return NULL/0/-1), evdev input backend is fully implemented (289 lines, device discovery, axis normalization), stub backend exists for dev/testing. CMakeLists.txt builds `libplayos.so.0.2.0`. Real source implementations are needed for Sprint 5 (system/storage/lifecycle/logging).
 
 This repository contains **libplayos** — the public C ABI that game developers use to interact with the PlayOS runtime. It is the only interface games are allowed to use; they must not call into the compositor, init, or shell directly.
 
@@ -25,17 +25,17 @@ include/playos/
 └── playos_logging.h    ← Structured log output
 
 src/
-├── playos_system.c     ← Implementation stubs
+├── playos_system.c     ← Stub implementation
 ├── playos_lifecycle.c
-├── playos_input.c
+├── playos_input.c       ← Dispatches to configured backend (strips reserved buttons for games)
 ├── playos_display.c
 ├── playos_storage.c
 ├── playos_audio.c
 ├── playos_power.c
 ├── playos_logging.c
-└── backend/
-    ├── backend_stub.c  ← No-op backend (testing / host dev)
-    └── backend_playos.c← Real backend (links to runtime IPC)
+└── backends/
+    ├── backend_stub.c   / backend_stub.h   ← No-op backend (testing / host dev)
+    └── backend_evdev.c  / backend_evdev.h  ← Real evdev input backend for ROG Ally
 
 tests/
 └── CMakeLists.txt
@@ -63,14 +63,21 @@ CMakeLists.txt
 ## Build Commands
 
 ```sh
-cmake -B build -DPLAYOS_BACKEND=stub   # host dev / testing
+# Stub backend (host dev / testing)
+cmake -B build -DPLAYOS_BACKEND=stub
 cmake --build build
 ctest --test-dir build
+
+# Evdev backend (real hardware)
+cmake -B build -DPLAYOS_BACKEND=evdev
+cmake --build build
 ```
+
+Current version: **0.2.0** (bumped from 0.1.0 after evdev backend landed).
 
 ## What NOT to Do
 
 - Do not add game logic or UI code here — this is a pure API boundary library.
 - Do not link against wlroots, libdrm, or any compositor-side library from this repo.
-- Do not read from `/run/playos/` directly in the stub backend — use the IPC helpers from `playos-runtime` when wiring the real backend.
+- Do not read from `/run/playos/` directly in the stub backend — use the IPC helpers from `playos-runtime` when wiring the real backend. The evdev backend (`backend_evdev.c`) is an exception and reads `/dev/input/` directly (this is the canonical Linux input access path and does not depend on PlayOS-specific IPC).
 - Do not introduce threading inside libplayos — the API is single-threaded from the game's perspective.
