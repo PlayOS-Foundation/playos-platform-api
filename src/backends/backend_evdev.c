@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 199309L
 /**
  * backend_evdev.c — evdev prototype backend for ROG Ally controller input
  *
