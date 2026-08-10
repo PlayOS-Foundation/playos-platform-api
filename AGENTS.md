@@ -1,6 +1,6 @@
 # AGENTS.md — playos-platform-api
 
-> **Implementation status:** 🟡 Partial implementation — all public headers exist with full declarations, source stubs exist for all modules (return NULL/0/-1), evdev input backend is fully implemented (289 lines, device discovery, axis normalization), stub backend exists for dev/testing. CMakeLists.txt builds `libplayos.so.0.2.0`. Real source implementations are needed for Sprint 5 (system/storage/lifecycle/logging).
+> **Implementation status:** 🟡 Partial implementation — all public headers exist with full declarations, source stubs exist for all modules (return NULL/0/-1), evdev input backend is fully implemented (289 lines, device discovery, axis normalization), stub backend exists for dev/testing. CMakeLists.txt builds `libplayos.so`. Real source implementations deferred to Sprint 6 (system/storage/lifecycle/logging).
 
 This repository contains **libplayos** — the public C ABI that game developers use to interact with the PlayOS runtime. It is the only interface games are allowed to use; they must not call into the compositor, init, or shell directly.
 
@@ -73,7 +73,7 @@ cmake -B build -DPLAYOS_BACKEND=evdev
 cmake --build build
 ```
 
-Current version: **0.2.0** (bumped from 0.1.0 after evdev backend landed).
+Current version: **0.3.0** (bumped from 0.2.0 after Sprint 5 shell integration).
 
 ## What NOT to Do
 
