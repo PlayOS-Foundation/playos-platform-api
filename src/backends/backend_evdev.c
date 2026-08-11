@@ -50,6 +50,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "playos/playos_logging.h"
+
 /* ── Axis calibration ────────────────────────────────────────────── */
 
 /* Xbox-compatible axis ranges (typical) */
@@ -246,8 +248,8 @@ static void drain_events(void)
  */
 static int open_controller(void)
 {
-    /* Try glob-based paths first, then enumerated /dev/input/event* */
     int fd;
+    int best_fd = -1;
 
     /* Scan /dev/input/event* for a joystick device */
     char dev_path[64];
@@ -256,11 +258,17 @@ static int open_controller(void)
         fd = open(dev_path, O_RDONLY | O_NONBLOCK);
         if (fd < 0) continue;
 
+        /* Get device name for diagnostics */
+        char name[256] = {0};
+        ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
+
         /* Check if this is a joystick/gamepad */
         unsigned long ev_bits[EV_MAX / 8 + 1] = {0};
         unsigned long abs_bits[ABS_MAX / 8 + 1] = {0};
 
         if (ioctl(fd, EVIOCGBIT(0, sizeof(ev_bits)), ev_bits) < 0) {
+            PLAYOS_LOG_D("input", "platform: skip %s (%s): ioctl(EV) failed",
+                         name, dev_path);
             close(fd);
             continue;
         }
@@ -270,38 +278,78 @@ static int open_controller(void)
         int has_key = !!(ev_bits[EV_KEY / 8] & (1u << (EV_KEY % 8)));
 
         if (!has_abs || !has_key) {
+            PLAYOS_LOG_D("input", "platform: skip %s (%s): not abs+key "
+                         "(abs=%d key=%d)", name, dev_path, has_abs, has_key);
             close(fd);
             continue;
         }
 
         /* Must have ABS_X, ABS_Y, ABS_RX, ABS_RY (gamepad axes) */
         if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs_bits)), abs_bits) < 0) {
+            PLAYOS_LOG_D("input", "platform: skip %s (%s): ioctl(ABS) failed",
+                         name, dev_path);
             close(fd);
             continue;
         }
 
-        int has_sticks =
-            !!(abs_bits[ABS_X / 8]  & (1u << (ABS_X % 8)))  &&
-            !!(abs_bits[ABS_Y / 8]  & (1u << (ABS_Y % 8)))  &&
-            !!(abs_bits[ABS_RX / 8] & (1u << (ABS_RX % 8))) &&
-            !!(abs_bits[ABS_RY / 8] & (1u << (ABS_RY % 8)));
+        int has_abs_x  = !!(abs_bits[ABS_X  / 8] & (1u << (ABS_X  % 8)));
+        int has_abs_y  = !!(abs_bits[ABS_Y  / 8] & (1u << (ABS_Y  % 8)));
+        int has_abs_rx = !!(abs_bits[ABS_RX / 8] & (1u << (ABS_RX % 8)));
+        int has_abs_ry = !!(abs_bits[ABS_RY / 8] & (1u << (ABS_RY % 8)));
+        int has_sticks = has_abs_x && has_abs_y && has_abs_rx && has_abs_ry;
 
         if (!has_sticks) {
+            PLAYOS_LOG_D("input", "platform: skip %s (%s): missing stick "
+                         "axes (X=%d Y=%d RX=%d RY=%d)",
+                         name, dev_path,
+                         has_abs_x, has_abs_y, has_abs_rx, has_abs_ry);
             close(fd);
             continue;
         }
 
-        /* Found a gamepad */
-        /* Detect trigger range from ABS_Z */
-        struct input_absinfo abs_info;
-        if (ioctl(fd, EVIOCGABS(ABS_Z), &abs_info) == 0) {
-            trigger_max = abs_info.maximum;
+        /* Prefer Xbox/Ally controllers by name */
+        int is_preferred =
+            strstr(name, "Xbox") || strstr(name, "xbox") ||
+            strstr(name, "X-Box") ||
+            strstr(name, "Microsoft") ||
+            strstr(name, "ASUE") ||
+            strstr(name, "ASUS") ||
+            strstr(name, "ROG Ally") ||
+            strstr(name, "Gamepad");
+
+        if (is_preferred) {
+            PLAYOS_LOG_I("input", "platform: found gamepad: %s (%s)",
+                         name, dev_path);
+            /* Detect trigger range from ABS_Z */
+            struct input_absinfo abs_info;
+            if (ioctl(fd, EVIOCGABS(ABS_Z), &abs_info) == 0) {
+                trigger_max = abs_info.maximum;
+                PLAYOS_LOG_D("input", "platform: trigger max = %d", trigger_max);
+            }
+            if (best_fd >= 0) close(best_fd);
+            return fd;
         }
 
-        return fd;
+        /* Keep the first viable fallback */
+        if (best_fd < 0) {
+            best_fd = fd;
+            PLAYOS_LOG_I("input", "platform: found gamepad (fallback): %s (%s)",
+                         name, dev_path);
+        } else {
+            PLAYOS_LOG_D("input", "platform: ignoring additional gamepad: %s (%s)",
+                         name, dev_path);
+            close(fd);
+        }
     }
 
-    return -1;
+    if (best_fd >= 0) {
+        struct input_absinfo abs_info;
+        if (ioctl(best_fd, EVIOCGABS(ABS_Z), &abs_info) == 0) {
+            trigger_max = abs_info.maximum;
+        }
+    }
+
+    return best_fd;
 }
 
 /* ── Public backend API ──────────────────────────────────────────── */
@@ -312,18 +360,24 @@ int backend_evdev_controller_connected(void)
         /* Check if fd is still valid */
         if (fcntl(evdev_fd, F_GETFL) >= 0) return 1;
         /* Stale fd — close and re-scan */
+        PLAYOS_LOG_W("input", "platform: controller fd stale, re-scanning");
         close(evdev_fd);
         evdev_fd = -1;
     }
 
     evdev_fd = open_controller();
-    if (evdev_fd < 0) return 0;
+    if (evdev_fd < 0) {
+        PLAYOS_LOG_W("input", "platform: no controller device found "
+                     "(scanned /dev/input/event0-31)");
+        return 0;
+    }
 
     /* Capture boot time on first connection */
     if (boot_time_us == 0) {
         boot_time_us = get_time_us();
     }
 
+    PLAYOS_LOG_I("input", "platform: controller connected (fd=%d)", evdev_fd);
     return 1;
 }
 
