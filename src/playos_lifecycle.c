@@ -22,6 +22,11 @@
 static int g_fd = -1;
 static int g_fd_resolved = 0;
 
+/* Last successfully-read lifecycle event. Used by playos_audio.c to enforce
+ * "volume setters are honored only while foreground". Processes that never
+ * receive an event (the shell/overlay) remain foreground by default. */
+static PlayOSLifecycleEvent g_last_event = PLAYOS_LIFECYCLE_FOREGROUND;
+
 /* Resolve the lifecycle fd once from the environment. Returns the fd, or
  * -1 if it is not present/valid. */
 static int resolve_fd(void)
@@ -73,6 +78,7 @@ int playos_lifecycle_poll(PlayOSLifecycleEvent *event)
 
     if (event)
         *event = (PlayOSLifecycleEvent)byte;
+    g_last_event = (PlayOSLifecycleEvent)byte;
     return 1;
 }
 
@@ -105,5 +111,11 @@ int playos_lifecycle_wait(PlayOSLifecycleEvent *event, int timeout_ms)
 
     if (event)
         *event = (PlayOSLifecycleEvent)byte;
+    g_last_event = (PlayOSLifecycleEvent)byte;
     return 1;
+}
+
+int playos_lifecycle_is_foreground(void)
+{
+    return g_last_event == PLAYOS_LIFECYCLE_FOREGROUND;
 }

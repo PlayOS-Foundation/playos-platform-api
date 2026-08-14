@@ -47,6 +47,12 @@ if(PLAYOS_BACKEND STREQUAL "evdev")
     target_compile_definitions(playos PRIVATE PLAYOS_BACKEND_EVDEV)
 endif()
 
+# ── ALSA (playos_audio.c master volume/mute mixer) ─────────────────────────
+find_library(ALSA_LIBRARY asound REQUIRED)
+find_path(ALSA_INCLUDE_DIR alsa/asoundlib.h REQUIRED)
+target_include_directories(playos PRIVATE ${ALSA_INCLUDE_DIR})
+target_link_libraries(playos PRIVATE ${ALSA_LIBRARY})
+
 # ── Install rules ───────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 
