@@ -116,6 +116,25 @@ audio_find_master(snd_mixer_t *mixer)
     return NULL;
 }
 
+/* Locate the first simple mixer element that has a playback mute switch.
+ * This is often a *different* element from the volume control on Realtek
+ * codecs (e.g. "Speaker Playback Volume" vs "Speaker Playback Switch"), so
+ * mute state must be read/written independently of the volume element. */
+static snd_mixer_elem_t *
+audio_find_switch(snd_mixer_t *mixer)
+{
+    if (!mixer)
+        return NULL;
+
+    snd_mixer_elem_t *elem = snd_mixer_first_elem(mixer);
+    while (elem) {
+        if (snd_mixer_selem_has_playback_switch(elem))
+            return elem;
+        elem = snd_mixer_elem_next(elem);
+    }
+    return NULL;
+}
+
 /* Cached mixer handle: opened lazily on first use and reused for the life of
  * the process. Opening/closing the ALSA mixer on every call was wasteful (the
  * overlay polls get_info() once per frame) and spammed the log whenever no
@@ -176,12 +195,19 @@ playos_audio_get_info(PlayOSAudioInfo *info)
             }
         }
 
-        if (snd_mixer_selem_has_playback_switch(elem)) {
-            int sw = 0;
-            if (snd_mixer_selem_get_playback_switch(
-                    elem, SND_MIXER_SCHN_FRONT_LEFT, &sw) >= 0) {
-                info->muted = (sw == 0) ? 1 : 0;
-            }
+    }
+
+    /* Mute state lives on the switch element (which may be distinct from the
+     * volume element on Realtek codecs). Fall back to the volume element if
+     * it happens to carry the switch itself. */
+    snd_mixer_elem_t *sw_elem = audio_find_switch(mixer);
+    if (!sw_elem)
+        sw_elem = elem;
+    if (sw_elem && snd_mixer_selem_has_playback_switch(sw_elem)) {
+        int sw = 0;
+        if (snd_mixer_selem_get_playback_switch(
+                sw_elem, SND_MIXER_SCHN_FRONT_LEFT, &sw) >= 0) {
+            info->muted = (sw == 0) ? 1 : 0;
         }
     }
 
@@ -237,7 +263,9 @@ playos_audio_set_muted(int muted)
     if (!mixer)
         return -1;
 
-    snd_mixer_elem_t *elem = audio_find_master(mixer);
+    snd_mixer_elem_t *elem = audio_find_switch(mixer);
+    if (!elem)
+        elem = audio_find_master(mixer);
     if (!elem) {
         PLAYOS_LOG_W("audio", "no master playback element found");
         return -1;
