@@ -1,6 +1,6 @@
 # AGENTS.md — playos-platform-api
 
-> **Implementation status:** 🟡 Partial implementation — all public headers exist with full declarations, source stubs exist for all modules (return NULL/0/-1), evdev input backend is fully implemented (289 lines, device discovery, axis normalization), stub backend exists for dev/testing. CMakeLists.txt builds `libplayos.so`. Real source implementations deferred to Sprint 6 (system/storage/lifecycle/logging).
+> **Implementation status:** 🟡 Partial implementation — all public headers exist with full declarations. Real implementations: `playos_system.c` (/proc, /sys, env), `playos_storage.c` (per-game paths from `PLAYOS_GAME_ID`), `playos_logging.c` (stderr structured logs), `playos_lifecycle.c` (fd-based lifecycle events), and `playos_input.c` (dispatches to backend). Backends: evdev input backend is fully implemented (device discovery, axis normalization); stub backend exists for dev/testing. Remaining stubs: `playos_audio.c`, `playos_display.c`, `playos_power.c`. CMakeLists.txt builds `libplayos.so`.
 
 This repository contains **libplayos** — the public C ABI that game developers use to interact with the PlayOS runtime. It is the only interface games are allowed to use; they must not call into the compositor, init, or shell directly.
 

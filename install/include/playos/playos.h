@@ -13,7 +13,7 @@
 #define PLAYOS_API_VERSION_PATCH  0
 
 /** Integer ABI version. Increment on breaking changes. */
-#define PLAYOS_API_VERSION  2
+#define PLAYOS_API_VERSION  1
 
 #include "playos_system.h"
 #include "playos_lifecycle.h"
