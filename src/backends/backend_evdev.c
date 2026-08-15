@@ -1,22 +1,44 @@
+#ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 199309L
+#endif
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
 /**
  * backend_evdev.c — evdev prototype backend for ROG Ally controller input
  *
  * Maps Linux evdev event codes to PlayOS logical button/axis contract.
  * Targets the ASUS ROG Ally (2023) built-in controller (Xbox-compatible HID).
  *
- * Button mapping (Xbox controller via xpad/hid-asus):
+ * The Ally exposes its controls across more than one evdev node. The old
+ * pre-reset backend opened three of them and this file does the same:
+ *
+ *   - gamepad node: all four stick axes plus BTN_SOUTH. Carries the standard
+ *     face buttons, sticks, triggers, and d-pad.
+ *   - home node: BTN_MODE without BTN_SOUTH (the Xbox/Guide button).
+ *   - vendor node (hid-asus-ally): KEY_PROG1/KEY_PROG2 and
+ *     BTN_TRIGGER_HAPPY1/BTN_TRIGGER_HAPPY2 (Armoury Crate / Command Center)
+ *     and the hardware volume keys. This backend reads only the reserved
+ *     buttons here; KEY_VOLUMEUP/DOWN are owned by the trusted shell.
+ *
+ * Button mapping (standard Xbox face buttons):
  *   BTN_SOUTH  → A     → PLAYOS_BUTTON_SOUTH
  *   BTN_EAST   → B     → PLAYOS_BUTTON_EAST
  *   BTN_WEST   → X     → PLAYOS_BUTTON_WEST
  *   BTN_NORTH  → Y     → PLAYOS_BUTTON_NORTH
  *   BTN_START  → START
  *   BTN_SELECT → SELECT
- *   BTN_MODE   → Xbox/Guide → PLAYOS_BUTTON_SYSTEM (reserved)
  *   BTN_THUMBL → L3
  *   BTN_THUMBR → R3
  *   BTN_TL     → L1 (left bumper)
  *   BTN_TR     → R1 (right bumper)
+ *
+ * Reserved buttons (stripped from game-facing snapshots):
+ *   BTN_MODE           → PLAYOS_BUTTON_SYSTEM     (Xbox/Guide)
+ *   KEY_PROG1          → PLAYOS_BUTTON_SYSTEM     (Armoury Crate / Home)
+ *   BTN_TRIGGER_HAPPY1 → PLAYOS_BUTTON_SYSTEM     (Armoury Crate alt)
+ *   KEY_PROG2          → PLAYOS_BUTTON_QUICK_MENU (Command Center)
+ *   BTN_TRIGGER_HAPPY2 → PLAYOS_BUTTON_QUICK_MENU (Command Center alt)
  *
  * D-pad:
  *   ABS_HAT0X  (-1=left, 1=right) → DPAD_LEFT/RIGHT
@@ -31,10 +53,6 @@
  * Triggers:
  *   ABS_Z  → LEFT_TRIGGER  [0, 255] → normalized to [0.0, 1.0]
  *   ABS_RZ → RIGHT_TRIGGER [0, 255] → normalized to [0.0, 1.0]
- *
- * Ally-specific:
- *   Quick-menu button (Armoury Crate) → PLAYOS_BUTTON_QUICK_MENU (reserved)
- *   Typically BTN_TRIGGER_HAPPY1 (0x2c0) or via hid-asus key
  *
  * SPDX-License-Identifier: MIT
  */
@@ -65,7 +83,9 @@
 
 /* ── Internal state ──────────────────────────────────────────────── */
 
-static int            evdev_fd = -1;
+static int            evdev_fd = -1;              /* Gamepad node */
+static int            home_fd = -1;               /* BTN_MODE-only node */
+static int            vendor_fd = -1;             /* hid-asus-ally reserved node */
 static int            trigger_max = TRIGGER_MAX;  /* Detected trigger range */
 static uint64_t       boot_time_us = 0;
 
@@ -82,6 +102,48 @@ static uint64_t get_time_us(void)
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
     return (uint64_t)ts.tv_sec * 1000000UL + (uint64_t)ts.tv_nsec / 1000UL;
+}
+
+/* ── Bit-array helpers (raw evdev, not libevdev) ─────────────────── */
+
+#define BITS_PER_LONG  (sizeof(unsigned long) * 8)
+#define EVDEV_BITS(x)  (((unsigned long)(x) / BITS_PER_LONG) + 1)
+#define TEST_BIT(bit, array) \
+    (((array)[(unsigned long)(bit) / BITS_PER_LONG] >> \
+      ((unsigned long)(bit) % BITS_PER_LONG)) & 1)
+
+/* Cached capability snapshot for one event device. */
+typedef struct {
+    char           name[256];
+    unsigned long  ev_bits[EVDEV_BITS(EV_MAX)];
+    unsigned long  abs_bits[EVDEV_BITS(ABS_MAX)];
+    unsigned long  key_bits[EVDEV_BITS(KEY_MAX)];
+} evdev_caps_t;
+
+static int evdev_get_caps(int fd, evdev_caps_t *caps)
+{
+    memset(caps, 0, sizeof(*caps));
+
+    if (ioctl(fd, EVIOCGNAME(sizeof(caps->name) - 1), caps->name) < 0)
+        caps->name[0] = '\0';
+    if (ioctl(fd, EVIOCGBIT(0, sizeof(caps->ev_bits)), caps->ev_bits) < 0)
+        return -1;
+    if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(caps->abs_bits)), caps->abs_bits) < 0)
+        return -1;
+    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(caps->key_bits)), caps->key_bits) < 0)
+        return -1;
+
+    return 0;
+}
+
+static int caps_has_gamepad_sticks(const evdev_caps_t *caps)
+{
+    return TEST_BIT(EV_ABS, caps->ev_bits) &&
+           TEST_BIT(EV_KEY, caps->ev_bits) &&
+           TEST_BIT(ABS_X,  caps->abs_bits) &&
+           TEST_BIT(ABS_Y,  caps->abs_bits) &&
+           TEST_BIT(ABS_RX, caps->abs_bits) &&
+           TEST_BIT(ABS_RY, caps->abs_bits);
 }
 
 /* ── Button lookup table ─────────────────────────────────────────── */
@@ -103,7 +165,10 @@ static const button_map_t BUTTON_MAP[] = {
     { BTN_THUMBR,          PLAYOS_BUTTON_R3          },
     { BTN_TL,              PLAYOS_BUTTON_L1          },
     { BTN_TR,              PLAYOS_BUTTON_R1          },
-    { BTN_TRIGGER_HAPPY1,  PLAYOS_BUTTON_QUICK_MENU  }, /* Ally quick-menu — reserved */
+    { KEY_PROG1,           PLAYOS_BUTTON_SYSTEM      }, /* Armoury Crate / Home */
+    { KEY_PROG2,           PLAYOS_BUTTON_QUICK_MENU  }, /* Command Center */
+    { BTN_TRIGGER_HAPPY1,  PLAYOS_BUTTON_SYSTEM      }, /* Armoury Crate alt */
+    { BTN_TRIGGER_HAPPY2,  PLAYOS_BUTTON_QUICK_MENU  }, /* Command Center alt */
     /*
      * D-pad is handled exclusively via ABS_HAT0X/Y below.
      * BTN_DPAD_* events are intentionally NOT mapped here:
@@ -174,70 +239,82 @@ static float normalize_trigger(int32_t val, int32_t min, int32_t max)
  * Drain pending events from the evdev fd and update internal state.
  * Capped at MAX_EVENTS_PER_CALL to guarantee bounded latency.
  */
-static void drain_events(void)
+static void process_event(const struct input_event *ev)
 {
-    if (evdev_fd < 0) return;
+    size_t i;
+
+    switch (ev->type) {
+    case EV_KEY:
+        for (i = 0; i < sizeof(BUTTON_MAP) / sizeof(BUTTON_MAP[0]); i++) {
+            if (ev->code == BUTTON_MAP[i].evdev_code) {
+                if (ev->value) {
+                    current_buttons |= BUTTON_MAP[i].button;
+                } else {
+                    current_buttons &= ~BUTTON_MAP[i].button;
+                }
+                break;
+            }
+        }
+        break;
+
+    case EV_ABS:
+        /* Store raw value */
+        for (i = 0; i < sizeof(AXIS_MAP) / sizeof(AXIS_MAP[0]); i++) {
+            if (ev->code == AXIS_MAP[i].evdev_code) {
+                raw_axes[AXIS_MAP[i].axis_index] = ev->value;
+                break;
+            }
+        }
+
+        /* D-pad via ABS_HAT */
+        if (ev->code == ABS_HAT0X) {
+            if (ev->value < 0) {
+                current_buttons |= PLAYOS_BUTTON_DPAD_LEFT;
+                current_buttons &= ~PLAYOS_BUTTON_DPAD_RIGHT;
+            } else if (ev->value > 0) {
+                current_buttons |= PLAYOS_BUTTON_DPAD_RIGHT;
+                current_buttons &= ~PLAYOS_BUTTON_DPAD_LEFT;
+            } else {
+                current_buttons &= ~(PLAYOS_BUTTON_DPAD_LEFT | PLAYOS_BUTTON_DPAD_RIGHT);
+            }
+        } else if (ev->code == ABS_HAT0Y) {
+            if (ev->value < 0) {
+                current_buttons |= PLAYOS_BUTTON_DPAD_UP;
+                current_buttons &= ~PLAYOS_BUTTON_DPAD_DOWN;
+            } else if (ev->value > 0) {
+                current_buttons |= PLAYOS_BUTTON_DPAD_DOWN;
+                current_buttons &= ~PLAYOS_BUTTON_DPAD_UP;
+            } else {
+                current_buttons &= ~(PLAYOS_BUTTON_DPAD_UP | PLAYOS_BUTTON_DPAD_DOWN);
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+static void drain_fd(int fd)
+{
+    if (fd < 0) return;
 
     struct input_event ev;
     ssize_t n;
     int count = 0;
 
     while (count < MAX_EVENTS_PER_CALL
-           && (n = read(evdev_fd, &ev, sizeof(ev))) == sizeof(ev)) {
+           && (n = read(fd, &ev, sizeof(ev))) == sizeof(ev)) {
         count++;
-        size_t i;
-
-        switch (ev.type) {
-        case EV_KEY:
-            for (i = 0; i < sizeof(BUTTON_MAP) / sizeof(BUTTON_MAP[0]); i++) {
-                if (ev.code == BUTTON_MAP[i].evdev_code) {
-                    if (ev.value) {
-                        current_buttons |= BUTTON_MAP[i].button;
-                    } else {
-                        current_buttons &= ~BUTTON_MAP[i].button;
-                    }
-                    break;
-                }
-            }
-            break;
-
-        case EV_ABS:
-            /* Store raw value */
-            for (i = 0; i < sizeof(AXIS_MAP) / sizeof(AXIS_MAP[0]); i++) {
-                if (ev.code == AXIS_MAP[i].evdev_code) {
-                    raw_axes[AXIS_MAP[i].axis_index] = ev.value;
-                    break;
-                }
-            }
-
-            /* D-pad via ABS_HAT */
-            if (ev.code == ABS_HAT0X) {
-                if (ev.value < 0) {
-                    current_buttons |= PLAYOS_BUTTON_DPAD_LEFT;
-                    current_buttons &= ~PLAYOS_BUTTON_DPAD_RIGHT;
-                } else if (ev.value > 0) {
-                    current_buttons |= PLAYOS_BUTTON_DPAD_RIGHT;
-                    current_buttons &= ~PLAYOS_BUTTON_DPAD_LEFT;
-                } else {
-                    current_buttons &= ~(PLAYOS_BUTTON_DPAD_LEFT | PLAYOS_BUTTON_DPAD_RIGHT);
-                }
-            } else if (ev.code == ABS_HAT0Y) {
-                if (ev.value < 0) {
-                    current_buttons |= PLAYOS_BUTTON_DPAD_UP;
-                    current_buttons &= ~PLAYOS_BUTTON_DPAD_DOWN;
-                } else if (ev.value > 0) {
-                    current_buttons |= PLAYOS_BUTTON_DPAD_DOWN;
-                    current_buttons &= ~PLAYOS_BUTTON_DPAD_UP;
-                } else {
-                    current_buttons &= ~(PLAYOS_BUTTON_DPAD_UP | PLAYOS_BUTTON_DPAD_DOWN);
-                }
-            }
-            break;
-
-        default:
-            break;
-        }
+        process_event(&ev);
     }
+}
+
+static void drain_events(void)
+{
+    drain_fd(evdev_fd);
+    drain_fd(home_fd);
+    drain_fd(vendor_fd);
 }
 
 /* ── Device discovery ────────────────────────────────────────────── */
@@ -246,80 +323,105 @@ static void drain_events(void)
  * Find and open the controller event device.
  * Returns fd on success, -1 if not found.
  */
+/* ── Device discovery ────────────────────────────────────────────── */
+
+typedef int (*evdev_caps_predicate)(const evdev_caps_t *caps);
+
+static int open_matching_device(const char *what, evdev_caps_predicate pred)
+{
+    char dev_path[64];
+    for (int i = 0; i < 32; i++) {
+        snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
+        int fd = open(dev_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) continue;
+
+        evdev_caps_t caps;
+        if (evdev_get_caps(fd, &caps) != 0) {
+            close(fd);
+            continue;
+        }
+
+        if (pred(&caps)) {
+            PLAYOS_LOG_I("input", "platform: %s: %s (%s)",
+                         what, caps.name[0] ? caps.name : "?", dev_path);
+            return fd;
+        }
+
+        close(fd);
+    }
+
+    return -1;
+}
+
+static int is_home_node(const evdev_caps_t *caps)
+{
+    return TEST_BIT(BTN_MODE, caps->key_bits) &&
+           !TEST_BIT(BTN_SOUTH, caps->key_bits);
+}
+
+static int is_vendor_node(const evdev_caps_t *caps)
+{
+    int has_reserved_buttons =
+        TEST_BIT(KEY_PROG1, caps->key_bits) ||
+        TEST_BIT(KEY_PROG2, caps->key_bits) ||
+        TEST_BIT(BTN_TRIGGER_HAPPY1, caps->key_bits) ||
+        TEST_BIT(BTN_TRIGGER_HAPPY2, caps->key_bits);
+
+    return has_reserved_buttons &&
+           !TEST_BIT(BTN_SOUTH, caps->key_bits) &&
+           !TEST_BIT(BTN_MODE, caps->key_bits);
+}
+
+/**
+ * Find and open the controller event device.
+ * Returns fd on success, -1 if not found.
+ */
 static int open_controller(void)
 {
-    int fd;
     int best_fd = -1;
 
     /* Scan /dev/input/event* for a joystick device */
     char dev_path[64];
     for (int i = 0; i < 32; i++) {
         snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
-        fd = open(dev_path, O_RDONLY | O_NONBLOCK);
+        int fd = open(dev_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0) continue;
 
-        /* Get device name for diagnostics */
-        char name[256] = {0};
-        ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
-
-        /* Check if this is a joystick/gamepad */
-        unsigned long ev_bits[EV_MAX / 8 + 1] = {0};
-        unsigned long abs_bits[ABS_MAX / 8 + 1] = {0};
-
-        if (ioctl(fd, EVIOCGBIT(0, sizeof(ev_bits)), ev_bits) < 0) {
-            PLAYOS_LOG_D("input", "platform: skip %s (%s): ioctl(EV) failed",
-                         name, dev_path);
+        evdev_caps_t caps;
+        if (evdev_get_caps(fd, &caps) != 0) {
+            PLAYOS_LOG_D("input", "platform: skip %s (%s): ioctl failed",
+                         caps.name[0] ? caps.name : "?", dev_path);
             close(fd);
             continue;
         }
 
-        /* Must have EV_ABS and EV_KEY */
-        int has_abs = !!(ev_bits[EV_ABS / 8] & (1u << (EV_ABS % 8)));
-        int has_key = !!(ev_bits[EV_KEY / 8] & (1u << (EV_KEY % 8)));
-
-        if (!has_abs || !has_key) {
-            PLAYOS_LOG_D("input", "platform: skip %s (%s): not abs+key "
-                         "(abs=%d key=%d)", name, dev_path, has_abs, has_key);
+        if (!caps_has_gamepad_sticks(&caps)) {
+            PLAYOS_LOG_D("input", "platform: skip %s (%s): missing gamepad "
+                         "sticks/keys", caps.name[0] ? caps.name : "?", dev_path);
             close(fd);
             continue;
         }
 
-        /* Must have ABS_X, ABS_Y, ABS_RX, ABS_RY (gamepad axes) */
-        if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs_bits)), abs_bits) < 0) {
-            PLAYOS_LOG_D("input", "platform: skip %s (%s): ioctl(ABS) failed",
-                         name, dev_path);
-            close(fd);
-            continue;
-        }
-
-        int has_abs_x  = !!(abs_bits[ABS_X  / 8] & (1u << (ABS_X  % 8)));
-        int has_abs_y  = !!(abs_bits[ABS_Y  / 8] & (1u << (ABS_Y  % 8)));
-        int has_abs_rx = !!(abs_bits[ABS_RX / 8] & (1u << (ABS_RX % 8)));
-        int has_abs_ry = !!(abs_bits[ABS_RY / 8] & (1u << (ABS_RY % 8)));
-        int has_sticks = has_abs_x && has_abs_y && has_abs_rx && has_abs_ry;
-
-        if (!has_sticks) {
-            PLAYOS_LOG_D("input", "platform: skip %s (%s): missing stick "
-                         "axes (X=%d Y=%d RX=%d RY=%d)",
-                         name, dev_path,
-                         has_abs_x, has_abs_y, has_abs_rx, has_abs_ry);
+        if (!TEST_BIT(BTN_SOUTH, caps.key_bits)) {
+            PLAYOS_LOG_D("input", "platform: skip %s (%s): missing BTN_SOUTH",
+                         caps.name[0] ? caps.name : "?", dev_path);
             close(fd);
             continue;
         }
 
         /* Prefer Xbox/Ally controllers by name */
         int is_preferred =
-            strstr(name, "Xbox") || strstr(name, "xbox") ||
-            strstr(name, "X-Box") ||
-            strstr(name, "Microsoft") ||
-            strstr(name, "ASUE") ||
-            strstr(name, "ASUS") ||
-            strstr(name, "ROG Ally") ||
-            strstr(name, "Gamepad");
+            strstr(caps.name, "Xbox") || strstr(caps.name, "xbox") ||
+            strstr(caps.name, "X-Box") ||
+            strstr(caps.name, "Microsoft") ||
+            strstr(caps.name, "ASUE") ||
+            strstr(caps.name, "ASUS") ||
+            strstr(caps.name, "ROG Ally") ||
+            strstr(caps.name, "Gamepad");
 
         if (is_preferred) {
             PLAYOS_LOG_I("input", "platform: found gamepad: %s (%s)",
-                         name, dev_path);
+                         caps.name, dev_path);
             /* Detect trigger range from ABS_Z */
             struct input_absinfo abs_info;
             if (ioctl(fd, EVIOCGABS(ABS_Z), &abs_info) == 0) {
@@ -334,10 +436,10 @@ static int open_controller(void)
         if (best_fd < 0) {
             best_fd = fd;
             PLAYOS_LOG_I("input", "platform: found gamepad (fallback): %s (%s)",
-                         name, dev_path);
+                         caps.name, dev_path);
         } else {
             PLAYOS_LOG_D("input", "platform: ignoring additional gamepad: %s (%s)",
-                         name, dev_path);
+                         caps.name, dev_path);
             close(fd);
         }
     }
@@ -352,32 +454,97 @@ static int open_controller(void)
     return best_fd;
 }
 
+static int open_home_node(void)
+{
+    return open_matching_device("home node", is_home_node);
+}
+
+static int open_vendor_node(void)
+{
+    return open_matching_device("vendor node", is_vendor_node);
+}
+
 /* ── Public backend API ──────────────────────────────────────────── */
 
 int backend_evdev_controller_connected(void)
 {
+    /* Full /dev/input/event0-31 scans are expensive. A node that is
+     * genuinely absent must not turn each poll into an open+ioctl pass over
+     * every event device, so failed discovery retries are throttled. */
+    const uint64_t RESCAN_INTERVAL_US = 2000000; /* 2s */
+    static uint64_t controller_next_retry_us = 0;
+    static uint64_t home_next_retry_us = 0;
+    static uint64_t vendor_next_retry_us = 0;
+
     if (evdev_fd >= 0) {
         /* Check if fd is still valid */
-        if (fcntl(evdev_fd, F_GETFL) >= 0) return 1;
-        /* Stale fd — close and re-scan */
-        PLAYOS_LOG_W("input", "platform: controller fd stale, re-scanning");
-        close(evdev_fd);
-        evdev_fd = -1;
+        if (fcntl(evdev_fd, F_GETFL) < 0) {
+            /* Stale fd — close and re-scan */
+            PLAYOS_LOG_W("input", "platform: controller fd stale, re-scanning");
+            close(evdev_fd);
+            evdev_fd = -1;
+        }
     }
 
-    evdev_fd = open_controller();
     if (evdev_fd < 0) {
-        PLAYOS_LOG_W("input", "platform: no controller device found "
-                     "(scanned /dev/input/event0-31)");
-        return 0;
+        uint64_t now = get_time_us();
+        if (now < controller_next_retry_us)
+            return 0;
+
+        evdev_fd = open_controller();
+        if (evdev_fd < 0) {
+            PLAYOS_LOG_W("input", "platform: no controller device found "
+                         "(scanned /dev/input/event0-31)");
+            controller_next_retry_us = now + RESCAN_INTERVAL_US;
+            return 0;
+        }
+
+        /* Capture boot time on first connection */
+        if (boot_time_us == 0) {
+            boot_time_us = get_time_us();
+        }
+
+        PLAYOS_LOG_I("input", "platform: controller connected (fd=%d)",
+                     evdev_fd);
     }
 
-    /* Capture boot time on first connection */
-    if (boot_time_us == 0) {
-        boot_time_us = get_time_us();
+    /* Best-effort re-scan of the two reserved-button nodes. These are
+     * independent evdev streams on the ROG Ally (home + armoury crate),
+     * so a missing node must not mask an otherwise healthy controller. */
+    if (home_fd >= 0 && fcntl(home_fd, F_GETFL) < 0) {
+        PLAYOS_LOG_W("input", "platform: home node fd stale, re-scanning");
+        close(home_fd);
+        home_fd = -1;
+    }
+    if (home_fd < 0) {
+        uint64_t now = get_time_us();
+        if (now >= home_next_retry_us) {
+            home_fd = open_home_node();
+            if (home_fd >= 0) {
+                PLAYOS_LOG_I("input", "platform: home node connected (fd=%d)",
+                             home_fd);
+            }
+            home_next_retry_us = now + RESCAN_INTERVAL_US;
+        }
     }
 
-    PLAYOS_LOG_I("input", "platform: controller connected (fd=%d)", evdev_fd);
+    if (vendor_fd >= 0 && fcntl(vendor_fd, F_GETFL) < 0) {
+        PLAYOS_LOG_W("input", "platform: vendor node fd stale, re-scanning");
+        close(vendor_fd);
+        vendor_fd = -1;
+    }
+    if (vendor_fd < 0) {
+        uint64_t now = get_time_us();
+        if (now >= vendor_next_retry_us) {
+            vendor_fd = open_vendor_node();
+            if (vendor_fd >= 0) {
+                PLAYOS_LOG_I("input", "platform: vendor node connected (fd=%d)",
+                             vendor_fd);
+            }
+            vendor_next_retry_us = now + RESCAN_INTERVAL_US;
+        }
+    }
+
     return 1;
 }
 

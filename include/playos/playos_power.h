@@ -34,7 +34,7 @@ typedef enum {
 typedef struct {
     PlayOSPowerState   power_state;
     int                battery_percent;    /**< 0–100. -1 if unknown. */
-    int                minutes_remaining;  /**< Estimated minutes until empty. -1 if unknown or charging. */
+    int                minutes_remaining;  /**< Estimated minutes until empty (on battery) or until full (charging). -1 if unknown. */
     PlayOSThermalState thermal_state;
     int                cpu_temp_c;         /**< CPU package temperature in °C. -1 if unknown. */
     int                gpu_temp_c;         /**< GPU temperature in °C. -1 if unknown. */

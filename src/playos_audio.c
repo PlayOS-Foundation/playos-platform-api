@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Provided by playos_lifecycle.c (internal, not part of the public ABI). */
 extern int playos_lifecycle_is_foreground(void);
@@ -142,22 +143,48 @@ audio_find_switch(snd_mixer_t *mixer)
  * for the process lifetime; element reads/writes always reflect live mixer
  * state, so polling correctness is preserved.
  *
- * g_mixer_state: 0 = uninitialized, 1 = open, -1 = unavailable. This API is
- * called from each process's single main loop (shell, overlay, game), so lazy
- * init is not synchronized; add a lock here if that assumption ever changes.
+ * g_mixer_state: 0 = uninitialized, 1 = open, -1 = unavailable. On the ROG
+ * Ally the SOF/ACP audio card (card 1) registers a few seconds after boot, so
+ * the first open attempt can fail. Instead of caching that failure for the
+ * process lifetime, we retry on a cooldown so the overlay/shell recover and
+ * their volume read/write paths start working once the card appears. This API
+ * is called from each process's single main loop (shell, overlay, game), so
+ * lazy init is not synchronized; add a lock here if that assumption ever
+ * changes.
  */
 static snd_mixer_t *g_mixer = NULL;
 static int g_mixer_state = 0;
 
+/* Minimum interval between mixer-open retries after a failure. */
+#define AUDIO_MIXER_RETRY_INTERVAL_SECONDS 2.0
+
+static double
+audio_now_seconds(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0.0;
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
 static snd_mixer_t *
 audio_mixer_get(void)
 {
-    if (g_mixer_state == 0) {
+    static double next_retry = 0.0;
+
+    if (g_mixer_state == 1)
+        return g_mixer;
+
+    double now = audio_now_seconds();
+    if (g_mixer_state == 0 || now >= next_retry) {
         if (audio_mixer_open(&g_mixer) == 0)
             g_mixer_state = 1;
-        else
+        else {
             g_mixer_state = -1;
+            next_retry = now + AUDIO_MIXER_RETRY_INTERVAL_SECONDS;
+        }
     }
+
     return g_mixer;
 }
 

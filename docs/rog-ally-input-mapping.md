@@ -4,14 +4,15 @@ ASUS ROG Ally (2023, Ryzen Z1 Extreme) built-in controller input mapping for Pla
 
 ## Device Identification
 
-The Ally controller appears as an Xbox-compatible HID device through one of these kernel drivers:
+The Ally exposes its controls across up to **three** evdev nodes, driven by a mix of kernel drivers:
 
-| Driver | Kernel config | Typical evdev node |
-|---|---|---|
-| `xpad` | `CONFIG_JOYSTICK_XPAD` | `/dev/input/event*` (joystick) |
-| `hid-asus` | `CONFIG_HID_ASUS` | `/dev/input/event*` |
+| Node | Driver(s) | Capability signature | Purpose |
+|---|---|---|---|
+| Gamepad | `xpad` / `hid-asus` | four stick axes (`ABS_X`, `ABS_Y`, `ABS_RX`, `ABS_RY`) + `BTN_SOUTH` | Face buttons, sticks, triggers, d-pad |
+| Home | `hid-asus` | `BTN_MODE` without `BTN_SOUTH` | Xbox/Guide button |
+| Vendor | `hid-asus-ally` | `KEY_PROG1`/`KEY_PROG2` and/or `BTN_TRIGGER_HAPPY1`/`BTN_TRIGGER_HAPPY2` (also `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`), without `BTN_SOUTH`/`BTN_MODE` | Armoury Crate, Command Center, hardware volume keys |
 
-The evdev backend auto-discovers the controller by scanning `/dev/input/event*` for a device with both `EV_KEY` and `EV_ABS` capabilities plus the four stick axes (`ABS_X`, `ABS_Y`, `ABS_RX`, `ABS_RY`).
+The platform-api backend and the trusted shell both scan `/dev/input/event*`. The backend opens the gamepad node as the primary device and best-effort opens the home and vendor nodes for reserved buttons. The shell additionally owns the hardware volume keys on the vendor node; the backend intentionally ignores them.
 
 ---
 
@@ -26,7 +27,10 @@ The evdev backend auto-discovers the controller by scanning `/dev/input/event*` 
 | Menu (Start) | `BTN_START` | 0x13b | `PLAYOS_BUTTON_START` (bit 4) | ✅ |
 | View (Select) | `BTN_SELECT` | 0x13a | `PLAYOS_BUTTON_SELECT` (bit 5) | ✅ |
 | Xbox/Guide | `BTN_MODE` | 0x13c | `PLAYOS_BUTTON_SYSTEM` (bit 6) | ❌ Reserved |
-| Armoury Crate | `BTN_TRIGGER_HAPPY1` | 0x2c0 | `PLAYOS_BUTTON_QUICK_MENU` (bit 7) | ❌ Reserved |
+| Armoury Crate (alt) | `KEY_PROG1` | 0x94 | `PLAYOS_BUTTON_SYSTEM` (bit 6) | ❌ Reserved |
+| Armoury Crate (alt) | `BTN_TRIGGER_HAPPY1` | 0x2c0 | `PLAYOS_BUTTON_SYSTEM` (bit 6) | ❌ Reserved |
+| Command Center (alt) | `KEY_PROG2` | 0x95 | `PLAYOS_BUTTON_QUICK_MENU` (bit 7) | ❌ Reserved |
+| Command Center (alt) | `BTN_TRIGGER_HAPPY2` | 0x2c1 | `PLAYOS_BUTTON_QUICK_MENU` (bit 7) | ❌ Reserved |
 | D-pad Up | `BTN_DPAD_UP` / `ABS_HAT0Y` | 0x220 / ABS 17 | `PLAYOS_BUTTON_DPAD_UP` (bit 8) | ✅ |
 | D-pad Down | `BTN_DPAD_DOWN` / `ABS_HAT0Y` | 0x221 / ABS 17 | `PLAYOS_BUTTON_DPAD_DOWN` (bit 9) | ✅ |
 | D-pad Left | `BTN_DPAD_LEFT` / `ABS_HAT0X` | 0x222 / ABS 16 | `PLAYOS_BUTTON_DPAD_LEFT` (bit 10) | ✅ |
@@ -38,7 +42,12 @@ The evdev backend auto-discovers the controller by scanning `/dev/input/event*` 
 
 ### Reserved Buttons
 
-`PLAYOS_BUTTON_SYSTEM` (Xbox/Guide) and `PLAYOS_BUTTON_QUICK_MENU` (Armoury Crate) are **stripped** by the public API layer before game-facing snapshots. The compositor and shell may observe them for system-level actions (home screen, overlay), but games must never see them.
+- `PLAYOS_BUTTON_SYSTEM` is produced by `BTN_MODE`, `KEY_PROG1`, and `BTN_TRIGGER_HAPPY1`.
+- `PLAYOS_BUTTON_QUICK_MENU` is produced by `KEY_PROG2`, `BTN_TRIGGER_HAPPY2`, and (in the shell) `KEY_LEFTMETA`/`KEY_RIGHTMETA`.
+
+Both are **stripped** by the public API layer before game-facing snapshots. The compositor and shell may observe them for system-level actions (home screen, overlay), but games must never see them.
+
+The hardware volume keys (`KEY_VOLUMEUP` / `KEY_VOLUMEDOWN`) are **not** PlayOS buttons and are handled directly by the trusted shell, which adjusts the system master volume through `playos_audio_*`. The platform-api backend intentionally leaves them unmapped.
 
 ---
 
@@ -66,11 +75,21 @@ The evdev backend auto-discovers the controller by scanning `/dev/input/event*` 
 
 ### D-Pad Dual Representation
 
-Some kernel drivers (xpad) report D-pad as both `EV_KEY` events (`BTN_DPAD_*`) **and** `EV_ABS` hat events (`ABS_HAT0X`/`ABS_HAT0Y`). The backend handles both paths — if `BTN_DPAD_*` events arrive, they set the bitmask directly. If `ABS_HAT0*` events arrive, the backend translates hat values to button bits. This is safe because both representations update the same button bitmap.
+Some kernel drivers (xpad) report D-pad as both `EV_KEY` events (`BTN_DPAD_*`) **and** `EV_ABS` hat events (`ABS_HAT0X`/`ABS_HAT0Y`). The two layers handle these differently:
 
-### Armoury Crate Button
+- **Platform API backend** (`backend_evdev.c`) maps **only** the `ABS_HAT0X`/`ABS_HAT0Y` hat path. `BTN_DPAD_*` events are intentionally ignored there because xpad/hid-asus report both, and the hat path enforces mutually exclusive directions (LEFT clears RIGHT, UP clears DOWN).
+- **Trusted shell** (`src/input.c`) handles **both** forms (`BTN_DPAD_*` and `ABS_HAT0*`), writing into the same button bitmap.
 
-The small button below the screen (Armoury Crate / Command Center) maps to `BTN_TRIGGER_HAPPY1` on hid-asus. On xpad this button may not be exposed or may appear under a different code. This button is reserved as `PLAYOS_BUTTON_QUICK_MENU` and stripped from game snapshots.
+Both representations ultimately drive the same logical D-pad buttons, so games receive consistent state regardless of which event path the driver emits.
+
+### Armoury Crate / Command Center
+
+The two small buttons below the screen live on the vendor node (`hid-asus-ally`), not the gamepad node:
+
+- Armoury Crate (`KEY_PROG1`, with `BTN_TRIGGER_HAPPY1` as an observed alternate) maps to `PLAYOS_BUTTON_SYSTEM`.
+- Command Center (`KEY_PROG2`, with `BTN_TRIGGER_HAPPY2` as an observed alternate) maps to `PLAYOS_BUTTON_QUICK_MENU`.
+
+On `xpad` these may not be exposed, or may appear under a different code. Both are reserved and stripped from game snapshots. The exact `KEY_PROG*` vs `BTN_TRIGGER_HAPPY*` pairing is per-firmware and may vary, so the backend accepts either code for the same logical button.
 
 ### Gyro / IMU
 
@@ -78,7 +97,7 @@ The Ally has an integrated IMU (accelerometer + gyroscope). This is **not** expo
 
 ### Back Paddles (M1/M2)
 
-The ROG Ally has two rear macro buttons (M1/M2). These may appear as `BTN_TRIGGER_HAPPY3`/`BTN_TRIGGER_HAPPY4` depending on the driver. They are **not mapped** in the current public contract but are noted here for future inclusion.
+The ROG Ally has two rear macro buttons (M1/M2). They *may* appear as `BTN_TRIGGER_HAPPY3`/`BTN_TRIGGER_HAPPY4` depending on the driver — this is **unverified** on the current hid-asus firmware. They are **not mapped** in the current public contract but are noted here for future inclusion.
 
 ---
 
