@@ -41,6 +41,23 @@ int playos_display_get_info(PlayOSDisplayInfo *info);
  */
 int playos_display_set_vsync(int enabled);
 
+/**
+ * Read the current display backlight brightness.
+ *
+ * @param[out] percent  Current brightness as 0..100, or -1 if unsupported.
+ * @return  0 on success, -1 if no backlight control is available.
+ */
+int playos_display_get_brightness(int *percent);
+
+/**
+ * Set the display backlight brightness.
+ *
+ * @param  percent  Target brightness, 0..100 (clamped).
+ * @return  0 on success, -1 if no backlight control is available or the
+ *          write failed.
+ */
+int playos_display_set_brightness(int percent);
+
 #ifdef __cplusplus
 }
 #endif
