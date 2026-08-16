@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 /* Provided by playos_lifecycle.c (internal, not part of the public ABI). */
@@ -100,40 +101,89 @@ audio_mixer_open(snd_mixer_t **out)
     return 0;
 }
 
-/* Locate the first simple mixer element that has a playback volume control.
- * Returns NULL when none is found. */
+/* Preferred simple-mixer element names, in priority order.
+ *
+ * The Ally's internal Realtek codec exposes several playback-volume controls
+ * (often "Headphone", "Speaker", and possibly "Master"/"PCM"). The *first*
+ * element returned by snd_mixer_first_elem() is not necessarily the one that
+ * drives the speaker path, so naively taking the first playback-volume
+ * element can select "Headphone" even while the game audio is routed to the
+ * speakers — making volume changes read/write a control that has no audible
+ * effect on the game stream.
+ *
+ * We therefore scan the whole mixer once per preferred name, in order, and
+ * only fall back to the first element carrying the requested capability when
+ * none of these well-known names exists. */
+static const char *const g_master_names[] = {
+    "Master", "Speaker", "PCM", "Front", "Headphone", "Headphones",
+};
+
+static const char *const g_switch_names[] = {
+    "Master", "Speaker", "Headphone", "Headphones",
+};
+
+/* Find an element whose name exactly matches one of `names` (case-insensitive)
+ * and which satisfies `predicate`; otherwise return the first element that
+ * satisfies `predicate`. Returns NULL when no matching element exists. */
 static snd_mixer_elem_t *
-audio_find_master(snd_mixer_t *mixer)
+audio_find_named(snd_mixer_t *mixer, const char *const *names,
+                 size_t name_count, int (*predicate)(snd_mixer_elem_t *))
 {
     if (!mixer)
         return NULL;
 
+    for (size_t n = 0; n < name_count; n++) {
+        snd_mixer_elem_t *elem = snd_mixer_first_elem(mixer);
+        while (elem) {
+            if (predicate(elem)) {
+                const char *name = snd_mixer_selem_get_name(elem);
+                if (name && strcasecmp(name, names[n]) == 0)
+                    return elem;
+            }
+            elem = snd_mixer_elem_next(elem);
+        }
+    }
+
     snd_mixer_elem_t *elem = snd_mixer_first_elem(mixer);
     while (elem) {
-        if (snd_mixer_selem_has_playback_volume(elem))
+        if (predicate(elem))
             return elem;
         elem = snd_mixer_elem_next(elem);
     }
     return NULL;
 }
 
-/* Locate the first simple mixer element that has a playback mute switch.
- * This is often a *different* element from the volume control on Realtek
- * codecs (e.g. "Speaker Playback Volume" vs "Speaker Playback Switch"), so
- * mute state must be read/written independently of the volume element. */
+/* Locate a simple mixer element with a playback volume control, preferring
+ * the names above. Returns NULL when none is found. */
+static snd_mixer_elem_t *
+audio_find_master(snd_mixer_t *mixer)
+{
+    return audio_find_named(mixer, g_master_names,
+                            sizeof(g_master_names) / sizeof(g_master_names[0]),
+                            snd_mixer_selem_has_playback_volume);
+}
+
+/* Locate a simple mixer element with a playback mute switch, preferring the
+ * names above. This is often a *different* element from the volume control on
+ * Realtek codecs (e.g. "Speaker Playback Volume" vs "Speaker Playback
+ * Switch"), so mute state must be read/written independently of the volume
+ * element. */
 static snd_mixer_elem_t *
 audio_find_switch(snd_mixer_t *mixer)
 {
-    if (!mixer)
-        return NULL;
+    return audio_find_named(mixer, g_switch_names,
+                            sizeof(g_switch_names) / sizeof(g_switch_names[0]),
+                            snd_mixer_selem_has_playback_switch);
+}
 
-    snd_mixer_elem_t *elem = snd_mixer_first_elem(mixer);
-    while (elem) {
-        if (snd_mixer_selem_has_playback_switch(elem))
-            return elem;
-        elem = snd_mixer_elem_next(elem);
-    }
-    return NULL;
+/* Human-readable name of a simple mixer element (or "-" when unknown). */
+static const char *
+audio_elem_name(snd_mixer_elem_t *elem)
+{
+    if (!elem)
+        return "-";
+    const char *name = snd_mixer_selem_get_name(elem);
+    return name ? name : "?";
 }
 
 /* Cached mixer handle: opened lazily on first use and reused for the life of
@@ -209,6 +259,13 @@ playos_audio_get_info(PlayOSAudioInfo *info)
 
     snd_mixer_elem_t *elem = audio_find_master(mixer);
     if (elem) {
+        static int master_element_logged = 0;
+        if (!master_element_logged) {
+            PLAYOS_LOG_D("audio", "master volume element: '%s'",
+                         audio_elem_name(elem));
+            master_element_logged = 1;
+        }
+
         long min = 0, max = 0;
         if (snd_mixer_selem_get_playback_volume_range(elem, &min, &max) >= 0 &&
             max > min) {
@@ -276,7 +333,8 @@ playos_audio_set_master_volume(float volume)
         return -1;
     }
 
-    PLAYOS_LOG_D("audio", "set master volume to %.2f", volume);
+    PLAYOS_LOG_D("audio", "set master volume to %.2f on '%s'",
+                 volume, audio_elem_name(elem));
     return 0;
 }
 
@@ -310,6 +368,7 @@ playos_audio_set_muted(int muted)
         return -1;
     }
 
-    PLAYOS_LOG_D("audio", "set muted=%d", muted);
+    PLAYOS_LOG_D("audio", "set muted=%d on '%s'",
+                 muted, audio_elem_name(elem));
     return 0;
 }
