@@ -2,8 +2,8 @@
  * playos_input.h — PlayOS logical controller input
  *
  * Games receive hardware-agnostic logical input state.
- * PLAYOS_BUTTON_SYSTEM and PLAYOS_BUTTON_QUICK_MENU are reserved
- * and are NEVER delivered to game processes.
+ * PLAYOS_BUTTON_SYSTEM, PLAYOS_BUTTON_QUICK_MENU and PLAYOS_BUTTON_POWER
+ * are reserved and are NEVER delivered to game processes.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -38,6 +38,7 @@ enum {
     PLAYOS_BUTTON_R1          = 1u << 13,
     PLAYOS_BUTTON_L3          = 1u << 14,  /**< Left stick click */
     PLAYOS_BUTTON_R3          = 1u << 15,  /**< Right stick click */
+    PLAYOS_BUTTON_POWER       = 1u << 16,  /**< Ally power button — RESERVED, not delivered to games */
 };
 
 /** Axis indices into PlayOSControllerState.axes[]. */

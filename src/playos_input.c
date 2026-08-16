@@ -2,7 +2,8 @@
  * playos_input.c — PlayOS logical controller input implementation
  *
  * Dispatches to the configured backend (evdev for Sprint 3).
- * Strips reserved buttons (SYSTEM, QUICK_MENU) from game-facing snapshots.
+ * Strips reserved buttons (SYSTEM, QUICK_MENU, POWER) from game-facing
+ * snapshots.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -15,8 +16,13 @@
 /* Stub backend — always reports no controller */
 #endif
 
-/* Reserved button mask: SYSTEM and QUICK_MENU must never reach games. */
-#define PLAYOS_RESERVED_BUTTONS (PLAYOS_BUTTON_SYSTEM | PLAYOS_BUTTON_QUICK_MENU)
+/* Reserved button mask: SYSTEM, QUICK_MENU and POWER must never reach
+ * games. POWER is currently only produced by the trusted shell's own evdev
+ * path (the backend never opens the ACPI power node), but stripping it here
+ * keeps the "reserved buttons are game-invisible" contract airtight if a
+ * backend ever maps KEY_POWER. */
+#define PLAYOS_RESERVED_BUTTONS \
+    (PLAYOS_BUTTON_SYSTEM | PLAYOS_BUTTON_QUICK_MENU | PLAYOS_BUTTON_POWER)
 
 int playos_input_controller_connected(void)
 {

@@ -4,15 +4,16 @@ ASUS ROG Ally (2023, Ryzen Z1 Extreme) built-in controller input mapping for Pla
 
 ## Device Identification
 
-The Ally exposes its controls across up to **three** evdev nodes, driven by a mix of kernel drivers:
+The Ally exposes its controls across up to **four** evdev nodes, driven by a mix of kernel drivers:
 
 | Node | Driver(s) | Capability signature | Purpose |
 |---|---|---|---|
 | Gamepad | `xpad` / `hid-asus` | four stick axes (`ABS_X`, `ABS_Y`, `ABS_RX`, `ABS_RY`) + `BTN_SOUTH` | Face buttons, sticks, triggers, d-pad |
 | Home | `hid-asus` | `BTN_MODE` without `BTN_SOUTH` | Xbox/Guide button |
 | Vendor | `hid-asus-ally` | `KEY_PROG1`/`KEY_PROG2` and/or `BTN_TRIGGER_HAPPY1`/`BTN_TRIGGER_HAPPY2` (also `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`), without `BTN_SOUTH`/`BTN_MODE` | Armoury Crate, Command Center, hardware volume keys |
+| Power | ACPI `PNP0C0C` | `KEY_POWER`/`KEY_SLEEP` without `BTN_SOUTH`/`BTN_MODE` | Hardware power/sleep button (shell-owned only) |
 
-The platform-api backend and the trusted shell both scan `/dev/input/event*`. The backend opens the gamepad node as the primary device and best-effort opens the home and vendor nodes for reserved buttons. The shell additionally owns the hardware volume keys on the vendor node; the backend intentionally ignores them.
+The platform-api backend and the trusted shell both scan `/dev/input/event*`. The backend opens the gamepad node as the primary device and best-effort opens the home and vendor nodes for reserved buttons. The shell additionally owns the hardware volume keys on the vendor node and the ACPI power/sleep node; the backend intentionally ignores them.
 
 ---
 
@@ -39,13 +40,15 @@ The platform-api backend and the trusted shell both scan `/dev/input/event*`. Th
 | RB (R1) | `BTN_TR` | 0x137 | `PLAYOS_BUTTON_R1` (bit 13) | ✅ |
 | Left Stick Click (L3) | `BTN_THUMBL` | 0x13d | `PLAYOS_BUTTON_L3` (bit 14) | ✅ |
 | Right Stick Click (R3) | `BTN_THUMBR` | 0x13e | `PLAYOS_BUTTON_R3` (bit 15) | ✅ |
+| Power button | `KEY_POWER` / `KEY_SLEEP` | 0x74 / 0x8e (142) | `PLAYOS_BUTTON_POWER` (bit 16) | ❌ Reserved |
 
 ### Reserved Buttons
 
 - `PLAYOS_BUTTON_SYSTEM` is produced by `BTN_MODE`, `KEY_PROG1`, and `BTN_TRIGGER_HAPPY1`.
 - `PLAYOS_BUTTON_QUICK_MENU` is produced by `KEY_PROG2`, `BTN_TRIGGER_HAPPY2`, and (in the shell) `KEY_LEFTMETA`/`KEY_RIGHTMETA`.
+- `PLAYOS_BUTTON_POWER` is produced by `KEY_POWER`/`KEY_SLEEP` on the ACPI Power/Sleep nodes. It is shell-owned: the backend never opens those nodes, and the public API additionally strips the bit as a defensive guarantee.
 
-Both are **stripped** by the public API layer before game-facing snapshots. The compositor and shell may observe them for system-level actions (home screen, overlay), but games must never see them.
+All three are **stripped** by the public API layer before game-facing snapshots. The compositor and shell may observe them for system-level actions (home screen, overlay, power), but games must never see them.
 
 The hardware volume keys (`KEY_VOLUMEUP` / `KEY_VOLUMEDOWN`) are **not** PlayOS buttons and are handled directly by the trusted shell, which adjusts the system master volume through `playos_audio_*`. The platform-api backend intentionally leaves them unmapped.
 
@@ -90,6 +93,10 @@ The two small buttons below the screen live on the vendor node (`hid-asus-ally`)
 - Command Center (`KEY_PROG2`, with `BTN_TRIGGER_HAPPY2` as an observed alternate) maps to `PLAYOS_BUTTON_QUICK_MENU`.
 
 On `xpad` these may not be exposed, or may appear under a different code. Both are reserved and stripped from game snapshots. The exact `KEY_PROG*` vs `BTN_TRIGGER_HAPPY*` pairing is per-firmware and may vary, so the backend accepts either code for the same logical button.
+
+### Power / Sleep Button
+
+The hardware power button arrives on a dedicated ACPI `PNP0C0C` node and reports `KEY_POWER` (`0x74`) or `KEY_SLEEP` (`0x8e` = 142). Like HOME/COMMAND, it is a momentary pulse: press and release arrive within a few milliseconds even when the button is physically held, with no autorepeat. The shell therefore latches the visual state for ~0.6s in the Live Input Test so a press is clearly visible, while the actual input is treated as a level bit set for the one frame the pulse is observed.
 
 ### Gyro / IMU
 
