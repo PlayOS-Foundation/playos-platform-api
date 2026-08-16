@@ -420,8 +420,8 @@ static int open_controller(void)
             strstr(caps.name, "Gamepad");
 
         if (is_preferred) {
-            PLAYOS_LOG_I("input", "platform: found gamepad: %s (%s)",
-                         caps.name, dev_path);
+            PLAYOS_LOG_I("input", "platform: found gamepad: %s (%s) fd=%d",
+                         caps.name, dev_path, fd);
             /* Detect trigger range from ABS_Z */
             struct input_absinfo abs_info;
             if (ioctl(fd, EVIOCGABS(ABS_Z), &abs_info) == 0) {
@@ -435,8 +435,8 @@ static int open_controller(void)
         /* Keep the first viable fallback */
         if (best_fd < 0) {
             best_fd = fd;
-            PLAYOS_LOG_I("input", "platform: found gamepad (fallback): %s (%s)",
-                         caps.name, dev_path);
+            PLAYOS_LOG_I("input", "platform: found gamepad (fallback): %s (%s) fd=%d",
+                         caps.name, dev_path, fd);
         } else {
             PLAYOS_LOG_D("input", "platform: ignoring additional gamepad: %s (%s)",
                          caps.name, dev_path);
