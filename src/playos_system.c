@@ -22,6 +22,96 @@ static char g_gpu_description[128];
 static char g_locale[32];
 static int  g_initialized = 0;
 
+/* ── Minimal JSON helpers for boot.json ──────────────────────────────────────
+ * boot.json is a fixed, small schema, so a hand-rolled parser is sufficient.
+ */
+
+static const char *skip_json_ws(const char *p)
+{
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+        p++;
+    return p;
+}
+
+/* Extract the quoted string value for a JSON key found in the range
+ * [start, end). `key` must already be quoted, e.g. "\"active_slot\"".
+ * Returns 1 on success and writes the (unquoted) value into out. */
+static int json_string_value(const char *start, const char *end,
+                             const char *key, char *out, size_t outsz)
+{
+    size_t keylen = strlen(key);
+    const char *p = start;
+
+    if (outsz == 0)
+        return 0;
+    out[0] = '\0';
+
+    while (p < end) {
+        const char *found = memchr(p, '"', (size_t)(end - p));
+        if (!found)
+            break;
+        if ((size_t)(end - found) >= keylen &&
+            strncmp(found, key, keylen) == 0) {
+            const char *q = skip_json_ws(found + keylen);
+            if (*q != ':') {
+                p = found + 1;
+                continue;
+            }
+            q = skip_json_ws(q + 1);
+            if (*q != '"') {
+                p = found + 1;
+                continue;
+            }
+            q++;
+            size_t n = 0;
+            while (q < end && *q != '"' && *q != '\0') {
+                if (n + 1 < outsz)
+                    out[n++] = *q;
+                q++;
+            }
+            out[n] = '\0';
+            return 1;
+        }
+        p = found + 1;
+    }
+
+    out[0] = '\0';
+    return 0;
+}
+
+/* Given a pointer to an opening '{', return a pointer just past its matching
+ * '}' (accounting for nested objects and strings), or NULL if unbalanced. */
+static const char *json_object_end(const char *open_brace)
+{
+    int depth = 0;
+    int in_string = 0;
+    const char *p = open_brace;
+
+    for (; *p; p++) {
+        if (in_string) {
+            if (*p == '\\') {
+                p++;
+                if (!*p)
+                    break;
+                continue;
+            }
+            if (*p == '"')
+                in_string = 0;
+            continue;
+        }
+        if (*p == '"') {
+            in_string = 1;
+        } else if (*p == '{') {
+            depth++;
+        } else if (*p == '}') {
+            depth--;
+            if (depth == 0)
+                return p + 1;
+        }
+    }
+    return NULL;
+}
+
 static void init_system_info(void)
 {
     if (g_initialized)
@@ -30,18 +120,45 @@ static void init_system_info(void)
 
     /* ── OS version ── */
     {
-        FILE *f = fopen("/etc/playos-version", "r");
+        snprintf(g_os_version, sizeof(g_os_version), "unknown");
+
+        FILE *f = fopen("/EFI/playos/boot.json", "r");
         if (f) {
-            if (fgets(g_os_version, sizeof(g_os_version), f)) {
-                size_t len = strlen(g_os_version);
-                while (len > 0 && (g_os_version[len - 1] == '\n' ||
-                       g_os_version[len - 1] == '\r'))
-                    g_os_version[--len] = '\0';
-            }
+            char buf[4096];
+            size_t n = fread(buf, 1, sizeof(buf) - 1, f);
             fclose(f);
+            buf[n] = '\0';
+
+            char active_slot[8] = {0};
+            const char *end = buf + n;
+            if (json_string_value(buf, end, "\"active_slot\"",
+                                  active_slot, sizeof(active_slot))) {
+                const char *slot_key = NULL;
+                if (strcmp(active_slot, "a") == 0)
+                    slot_key = "\"slot_a\"";
+                else if (strcmp(active_slot, "b") == 0)
+                    slot_key = "\"slot_b\"";
+
+                if (slot_key) {
+                    const char *slot = strstr(buf, slot_key);
+                    if (slot && slot < end) {
+                        const char *open = strchr(slot, '{');
+                        if (open && open < end) {
+                            const char *close = json_object_end(open);
+                            if (close) {
+                                char version[64];
+                                if (json_string_value(slot, close, "\"version\"",
+                                                      version, sizeof(version)) &&
+                                    version[0] != '\0') {
+                                    snprintf(g_os_version, sizeof(g_os_version),
+                                             "%s", version);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        if (g_os_version[0] == '\0')
-            snprintf(g_os_version, sizeof(g_os_version), "0.3.0");
     }
 
     /* ── Device model ── */
