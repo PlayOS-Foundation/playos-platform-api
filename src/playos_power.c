@@ -12,6 +12,7 @@
 
 #include "playos/playos_power.h"
 #include "playos/playos_logging.h"
+#include "playos_power_internal.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -80,6 +81,25 @@ static int read_str_file(const char *path, char *buf, size_t buf_sz)
     return 0;
 }
 
+/* ── Vendor-agnostic hwmon classification (Sprint 13 T5) ────────────────── */
+
+int playos__hwmon_name_is_gpu(const char *name)
+{
+    if (!name)
+        return 0;
+    return strcmp(name, "amdgpu") == 0 ||
+           strcmp(name, "i915") == 0 ||
+           strcmp(name, "xe") == 0;
+}
+
+int playos__hwmon_name_is_cpu(const char *name)
+{
+    if (!name)
+        return 0;
+    return strcmp(name, "k10temp") == 0 ||
+           strcmp(name, "coretemp") == 0;
+}
+
 /* ── Thermal readers ──────────────────────────────────────────────────────── */
 
 /* Read a temperature node in /sys/class/thermal whose "type" matches. */
@@ -116,7 +136,8 @@ static int read_thermal_zone_by_type(const char *want)
     return result;
 }
 
-/* Read the AMD GPU hwmon temp1_input (millidegrees C -> degrees C). */
+/* Read the GPU hwmon temp1_input (millidegrees C -> degrees C).
+ * Matches AMD (amdgpu) and Intel (i915/xe) hwmon names. */
 static int read_hwmon_gpu_temp(void)
 {
     DIR *d = opendir("/sys/class/hwmon");
@@ -136,7 +157,7 @@ static int read_hwmon_gpu_temp(void)
         snprintf(path, sizeof(path), "/sys/class/hwmon/%s/name", e->d_name);
         if (read_str_file(path, name, sizeof(name)) != 0)
             continue;
-        if (strcmp(name, "amdgpu") != 0)
+        if (!playos__hwmon_name_is_gpu(name))
             continue;
 
         snprintf(path, sizeof(path), "/sys/class/hwmon/%s/temp1_input", e->d_name);
@@ -150,7 +171,8 @@ static int read_hwmon_gpu_temp(void)
     return result;
 }
 
-/* Read the AMD CPU package temperature from k10temp hwmon. */
+/* Read the CPU package temperature from the k10temp (AMD) or coretemp
+ * (Intel) hwmon node. */
 static int read_hwmon_cpu_temp(void)
 {
     DIR *d = opendir("/sys/class/hwmon");
@@ -170,7 +192,7 @@ static int read_hwmon_cpu_temp(void)
         snprintf(path, sizeof(path), "/sys/class/hwmon/%s/name", e->d_name);
         if (read_str_file(path, name, sizeof(name)) != 0)
             continue;
-        if (strcmp(name, "k10temp") != 0)
+        if (!playos__hwmon_name_is_cpu(name))
             continue;
 
         snprintf(path, sizeof(path), "/sys/class/hwmon/%s/temp1_input", e->d_name);
