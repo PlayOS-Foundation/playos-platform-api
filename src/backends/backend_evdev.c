@@ -471,7 +471,7 @@ static int open_controller(void)
             continue;
         }
 
-        /* Prefer Xbox/Ally controllers by name */
+        /* Prefer Xbox/Ally/PlayStation controllers by name */
         int is_preferred =
             strstr(caps.name, "Xbox") || strstr(caps.name, "xbox") ||
             strstr(caps.name, "X-Box") ||
@@ -479,7 +479,11 @@ static int open_controller(void)
             strstr(caps.name, "ASUE") ||
             strstr(caps.name, "ASUS") ||
             strstr(caps.name, "ROG Ally") ||
-            strstr(caps.name, "Gamepad");
+            strstr(caps.name, "Gamepad") ||
+            strstr(caps.name, "Sony") ||
+            strstr(caps.name, "DualSense") ||
+            strstr(caps.name, "DualShock") ||
+            strstr(caps.name, "Wireless Controller");
 
         if (is_preferred) {
             PLAYOS_LOG_I("input", "platform: found gamepad: %s (%s) fd=%d",
