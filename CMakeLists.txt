@@ -43,7 +43,10 @@ if(PLAYOS_BACKEND STREQUAL "stub" OR PLAYOS_BACKEND STREQUAL "auto")
 endif()
 
 if(PLAYOS_BACKEND STREQUAL "evdev")
-    target_sources(playos PRIVATE src/backends/backend_evdev.c)
+    target_sources(playos PRIVATE
+        src/backends/backend_evdev.c
+        src/backends/gamepad_db.c
+    )
     target_compile_definitions(playos PRIVATE PLAYOS_BACKEND_EVDEV)
 endif()
 

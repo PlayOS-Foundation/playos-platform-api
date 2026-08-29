@@ -58,6 +58,7 @@
  */
 
 #include "backend_evdev.h"
+#include "gamepad_db.h"
 
 #include <fcntl.h>
 #include <linux/input.h>
@@ -93,12 +94,18 @@ static uint64_t       boot_time_us = 0;
  *
  * The Ally's internal controller enumerates as a standard Xbox 360 pad
  * (name "Microsoft X-Box 360 pad", VID 045e:028e) on the SoC's internal USB
- * port (phys "usb-0000:09:00.3-2/input0"), but its face buttons are wired
- * rotated: physical X reports BTN_NORTH and physical Y reports BTN_WEST.
- * A and B are standard. Swap NORTH<->WEST only for that device so external
- * Xbox pads on other ports keep the standard mapping. Env override:
- * PLAYOS_ROG_ALLY_FACE_SWAP=1 forces the swap, =0 forces it off. */
+ * port (phys "usb-0000:09:00.3-2/input0"), but its face buttons follow the
+ * Linux BTN_X/BTN_Y convention (physical X reports BTN_NORTH, physical Y
+ * reports BTN_WEST). This swap fixes the Xbox-standard fallback table for
+ * that device. When a SDL_GameControllerDB entry matches, the entry already
+ * encodes the correct X/Y and this quirk is disabled (g_remap_from_db).
+ * Env override: PLAYOS_ROG_ALLY_FACE_SWAP=1 forces the swap, =0 disables it. */
 static int g_rog_ally_face_swap = 0;
+
+/* Per-device remap resolved from the SDL_GameControllerDB (Sprint 13.6).
+ * Falls back to the Xbox-standard table when the device has no DB entry. */
+static struct playos_db_remap g_remap;
+static int g_remap_from_db = 0;
 
 /* Current button bitmap (before reserved-mask stripping) */
 static playos_button_mask_t current_buttons = 0;
@@ -160,7 +167,9 @@ static int caps_has_gamepad_sticks(const evdev_caps_t *caps)
            TEST_BIT(ABS_RY, caps->abs_bits);
 }
 
-/* ── Button lookup table ─────────────────────────────────────────── */
+/* ── Button lookup table (reserved buttons only) ──────────────────── */
+/* Standard face/aux buttons are resolved per-device through the
+ * SDL_GameControllerDB remap (g_remap); see process_event(). */
 
 typedef struct {
     uint16_t               evdev_code;
@@ -168,44 +177,25 @@ typedef struct {
 } button_map_t;
 
 static const button_map_t BUTTON_MAP[] = {
-    { BTN_SOUTH,           PLAYOS_BUTTON_SOUTH       },
-    { BTN_EAST,            PLAYOS_BUTTON_EAST        },
-    { BTN_WEST,            PLAYOS_BUTTON_WEST        },
-    { BTN_NORTH,           PLAYOS_BUTTON_NORTH       },
-    { BTN_START,           PLAYOS_BUTTON_START       },
-    { BTN_SELECT,          PLAYOS_BUTTON_SELECT      },
     { BTN_MODE,            PLAYOS_BUTTON_SYSTEM      }, /* Xbox button — reserved */
-    { BTN_THUMBL,          PLAYOS_BUTTON_L3          },
-    { BTN_THUMBR,          PLAYOS_BUTTON_R3          },
-    { BTN_TL,              PLAYOS_BUTTON_L1          },
-    { BTN_TR,              PLAYOS_BUTTON_R1          },
     { KEY_PROG1,           PLAYOS_BUTTON_SYSTEM      }, /* Armoury Crate / Home */
     { KEY_PROG2,           PLAYOS_BUTTON_QUICK_MENU  }, /* Command Center */
     { BTN_TRIGGER_HAPPY1,  PLAYOS_BUTTON_SYSTEM      }, /* Armoury Crate alt */
     { BTN_TRIGGER_HAPPY2,  PLAYOS_BUTTON_QUICK_MENU  }, /* Command Center alt */
-    /*
-     * D-pad is handled exclusively via ABS_HAT0X/Y below.
-     * BTN_DPAD_* events are intentionally NOT mapped here:
-     * xpad/hid-asus report both, and ABS_HAT enforces
-     * mutually exclusive directions (LEFT clears RIGHT, etc.).
-     */
 };
 
-/* ── Axis mapping ────────────────────────────────────────────────── */
-
-typedef struct {
-    uint16_t    evdev_code;
-    int         axis_index;
-    int         is_trigger;  /* 0 = stick ([-1,1]), 1 = trigger ([0,1]) */
-} axis_map_t;
-
-static const axis_map_t AXIS_MAP[] = {
-    { ABS_X,  PLAYOS_AXIS_LEFT_X,  0 },
-    { ABS_Y,  PLAYOS_AXIS_LEFT_Y,  0 },
-    { ABS_RX, PLAYOS_AXIS_RIGHT_X, 0 },
-    { ABS_RY, PLAYOS_AXIS_RIGHT_Y, 0 },
-    { ABS_Z,  PLAYOS_AXIS_LEFT_TRIGGER,  1 },
-    { ABS_RZ, PLAYOS_AXIS_RIGHT_TRIGGER, 1 },
+/* Logical PlayOS button for each database button slot. */
+static const playos_button_mask_t DB_BUTTON_MASKS[PLAYOS_DB_BTN_COUNT] = {
+    PLAYOS_BUTTON_SOUTH,   /* A */
+    PLAYOS_BUTTON_EAST,    /* B */
+    PLAYOS_BUTTON_WEST,    /* X */
+    PLAYOS_BUTTON_NORTH,   /* Y */
+    PLAYOS_BUTTON_SELECT,
+    PLAYOS_BUTTON_START,
+    PLAYOS_BUTTON_L3,
+    PLAYOS_BUTTON_R3,
+    PLAYOS_BUTTON_L1,
+    PLAYOS_BUTTON_R1,
 };
 
 /* ── Normalization ───────────────────────────────────────────────── */
@@ -266,13 +256,53 @@ static void process_event(const struct input_event *ev, int face_swap)
             else if (code == BTN_NORTH)
                 code = BTN_WEST;
         }
+
+        /* Standard buttons through the per-device database remap. */
+        for (i = 0; i < PLAYOS_DB_BTN_COUNT; i++) {
+            if ((int)code == g_remap.buttons[i]) {
+                if (ev->value)
+                    current_buttons |= DB_BUTTON_MASKS[i];
+                else
+                    current_buttons &= ~DB_BUTTON_MASKS[i];
+                return;
+            }
+        }
+
+        /* D-pad as buttons (pads without an ABS_HAT). */
+        if (g_remap.dpad_hat_x < 0) {
+            if ((int)code == g_remap.dpad_btn_up) {
+                if (ev->value) { current_buttons |= PLAYOS_BUTTON_DPAD_UP;
+                                 current_buttons &= ~PLAYOS_BUTTON_DPAD_DOWN; }
+                else current_buttons &= ~PLAYOS_BUTTON_DPAD_UP;
+                return;
+            }
+            if ((int)code == g_remap.dpad_btn_down) {
+                if (ev->value) { current_buttons |= PLAYOS_BUTTON_DPAD_DOWN;
+                                 current_buttons &= ~PLAYOS_BUTTON_DPAD_UP; }
+                else current_buttons &= ~PLAYOS_BUTTON_DPAD_DOWN;
+                return;
+            }
+            if ((int)code == g_remap.dpad_btn_left) {
+                if (ev->value) { current_buttons |= PLAYOS_BUTTON_DPAD_LEFT;
+                                 current_buttons &= ~PLAYOS_BUTTON_DPAD_RIGHT; }
+                else current_buttons &= ~PLAYOS_BUTTON_DPAD_LEFT;
+                return;
+            }
+            if ((int)code == g_remap.dpad_btn_right) {
+                if (ev->value) { current_buttons |= PLAYOS_BUTTON_DPAD_RIGHT;
+                                 current_buttons &= ~PLAYOS_BUTTON_DPAD_LEFT; }
+                else current_buttons &= ~PLAYOS_BUTTON_DPAD_RIGHT;
+                return;
+            }
+        }
+
+        /* Reserved buttons (system / quick menu) — never given to games. */
         for (i = 0; i < sizeof(BUTTON_MAP) / sizeof(BUTTON_MAP[0]); i++) {
             if (code == BUTTON_MAP[i].evdev_code) {
-                if (ev->value) {
+                if (ev->value)
                     current_buttons |= BUTTON_MAP[i].button;
-                } else {
+                else
                     current_buttons &= ~BUTTON_MAP[i].button;
-                }
                 break;
             }
         }
@@ -280,34 +310,42 @@ static void process_event(const struct input_event *ev, int face_swap)
     }
 
     case EV_ABS:
-        /* Store raw value */
-        for (i = 0; i < sizeof(AXIS_MAP) / sizeof(AXIS_MAP[0]); i++) {
-            if (ev->code == AXIS_MAP[i].evdev_code) {
-                raw_axes[AXIS_MAP[i].axis_index] = ev->value;
-                break;
-            }
-        }
+        /* Sticks and triggers through the per-device remap. */
+        if (ev->code == g_remap.abs_left_x)
+            raw_axes[PLAYOS_AXIS_LEFT_X] = ev->value;
+        else if (ev->code == g_remap.abs_left_y)
+            raw_axes[PLAYOS_AXIS_LEFT_Y] = ev->value;
+        else if (ev->code == g_remap.abs_right_x)
+            raw_axes[PLAYOS_AXIS_RIGHT_X] = ev->value;
+        else if (ev->code == g_remap.abs_right_y)
+            raw_axes[PLAYOS_AXIS_RIGHT_Y] = ev->value;
+        else if (ev->code == g_remap.abs_left_trigger)
+            raw_axes[PLAYOS_AXIS_LEFT_TRIGGER] = ev->value;
+        else if (ev->code == g_remap.abs_right_trigger)
+            raw_axes[PLAYOS_AXIS_RIGHT_TRIGGER] = ev->value;
 
-        /* D-pad via ABS_HAT */
-        if (ev->code == ABS_HAT0X) {
-            if (ev->value < 0) {
-                current_buttons |= PLAYOS_BUTTON_DPAD_LEFT;
-                current_buttons &= ~PLAYOS_BUTTON_DPAD_RIGHT;
-            } else if (ev->value > 0) {
-                current_buttons |= PLAYOS_BUTTON_DPAD_RIGHT;
-                current_buttons &= ~PLAYOS_BUTTON_DPAD_LEFT;
-            } else {
-                current_buttons &= ~(PLAYOS_BUTTON_DPAD_LEFT | PLAYOS_BUTTON_DPAD_RIGHT);
-            }
-        } else if (ev->code == ABS_HAT0Y) {
-            if (ev->value < 0) {
-                current_buttons |= PLAYOS_BUTTON_DPAD_UP;
-                current_buttons &= ~PLAYOS_BUTTON_DPAD_DOWN;
-            } else if (ev->value > 0) {
-                current_buttons |= PLAYOS_BUTTON_DPAD_DOWN;
-                current_buttons &= ~PLAYOS_BUTTON_DPAD_UP;
-            } else {
-                current_buttons &= ~(PLAYOS_BUTTON_DPAD_UP | PLAYOS_BUTTON_DPAD_DOWN);
+        /* D-pad via ABS_HAT (mutually exclusive directions). */
+        if (g_remap.dpad_hat_x >= 0) {
+            if (ev->code == g_remap.dpad_hat_x) {
+                if (ev->value < 0) {
+                    current_buttons |= PLAYOS_BUTTON_DPAD_LEFT;
+                    current_buttons &= ~PLAYOS_BUTTON_DPAD_RIGHT;
+                } else if (ev->value > 0) {
+                    current_buttons |= PLAYOS_BUTTON_DPAD_RIGHT;
+                    current_buttons &= ~PLAYOS_BUTTON_DPAD_LEFT;
+                } else {
+                    current_buttons &= ~(PLAYOS_BUTTON_DPAD_LEFT | PLAYOS_BUTTON_DPAD_RIGHT);
+                }
+            } else if (ev->code == g_remap.dpad_hat_x + 1) {
+                if (ev->value < 0) {
+                    current_buttons |= PLAYOS_BUTTON_DPAD_UP;
+                    current_buttons &= ~PLAYOS_BUTTON_DPAD_DOWN;
+                } else if (ev->value > 0) {
+                    current_buttons |= PLAYOS_BUTTON_DPAD_DOWN;
+                    current_buttons &= ~PLAYOS_BUTTON_DPAD_UP;
+                } else {
+                    current_buttons &= ~(PLAYOS_BUTTON_DPAD_UP | PLAYOS_BUTTON_DPAD_DOWN);
+                }
             }
         }
         break;
@@ -334,7 +372,9 @@ static void drain_fd(int fd, int face_swap)
 
 static void drain_events(void)
 {
-    drain_fd(evdev_fd, g_rog_ally_face_swap);
+    /* The Ally face-swap only patches the Xbox-standard fallback table.
+     * When a DB entry matched, the entry already maps X/Y correctly. */
+    drain_fd(evdev_fd, g_rog_ally_face_swap && !g_remap_from_db);
     drain_fd(home_fd, 0);
     drain_fd(vendor_fd, 0);
 }
@@ -512,6 +552,48 @@ static void platform_detect_face_swap(int fd)
                  g_rog_ally_face_swap ? "ON" : "off", name, phys);
 }
 
+/* Resolve the SDL_GameControllerDB entry for the opened gamepad and install
+ * the per-device remap (Sprint 13.6). Falls back to the Xbox-standard table
+ * when the device has no entry. */
+static void platform_resolve_remap(int fd)
+{
+    struct input_id id;
+    memset(&id, 0, sizeof(id));
+    if (ioctl(fd, EVIOCGID, &id) < 0)
+        id.bustype = id.vendor = id.product = id.version = 0;
+
+    struct playos_db_evdev_tables tables;
+    int ok = playos_db_build_tables(fd, &tables);
+
+    if (ok == 0 &&
+        playos_db_resolve(&tables, id.bustype, id.vendor, id.product,
+                          id.version, &g_remap) == 0) {
+        g_remap_from_db = 1;
+        char name[256] = {0};
+        ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
+        PLAYOS_LOG_I("input", "platform: gamepad DB entry matched "
+                     "(name='%s' bustype=%04x vendor=%04x product=%04x)",
+                     name, id.bustype, id.vendor, id.product);
+    } else {
+        g_remap_from_db = 0;
+        playos_db_default_remap(&g_remap);
+        char name[256] = {0};
+        ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
+        PLAYOS_LOG_I("input", "platform: no gamepad DB entry for '%s' "
+                     "(bustype=%04x vendor=%04x product=%04x) — Xbox fallback",
+                     name, id.bustype, id.vendor, id.product);
+    }
+
+    /* Detect trigger range from the resolved left-trigger axis. */
+    if (g_remap.abs_left_trigger >= 0) {
+        struct input_absinfo abs_info;
+        if (ioctl(fd, EVIOCGABS(g_remap.abs_left_trigger), &abs_info) == 0) {
+            trigger_max = abs_info.maximum;
+            PLAYOS_LOG_D("input", "platform: trigger max = %d", trigger_max);
+        }
+    }
+}
+
 /* ── Public backend API ──────────────────────────────────────────── */
 
 int backend_evdev_controller_connected(void)
@@ -548,6 +630,7 @@ int backend_evdev_controller_connected(void)
         }
 
         platform_detect_face_swap(evdev_fd);
+        platform_resolve_remap(evdev_fd);
 
         /* Capture boot time on first connection */
         if (boot_time_us == 0) {
@@ -614,17 +697,20 @@ int backend_evdev_get_controller_state(PlayOSControllerState *state)
     state->timestamp_us = get_time_us();
 
     /* Normalize axes */
-    for (size_t i = 0; i < sizeof(AXIS_MAP) / sizeof(AXIS_MAP[0]); i++) {
-        int idx = AXIS_MAP[i].axis_index;
-
-        if (AXIS_MAP[i].is_trigger) {
-            state->axes[idx] = normalize_trigger(
-                raw_axes[idx], TRIGGER_MIN, trigger_max);
-        } else {
-            state->axes[idx] = normalize_stick(
-                raw_axes[idx], STICK_MIN, STICK_MAX);
-        }
-    }
+    state->axes[PLAYOS_AXIS_LEFT_X] =
+        normalize_stick(raw_axes[PLAYOS_AXIS_LEFT_X], STICK_MIN, STICK_MAX);
+    state->axes[PLAYOS_AXIS_LEFT_Y] =
+        normalize_stick(raw_axes[PLAYOS_AXIS_LEFT_Y], STICK_MIN, STICK_MAX);
+    state->axes[PLAYOS_AXIS_RIGHT_X] =
+        normalize_stick(raw_axes[PLAYOS_AXIS_RIGHT_X], STICK_MIN, STICK_MAX);
+    state->axes[PLAYOS_AXIS_RIGHT_Y] =
+        normalize_stick(raw_axes[PLAYOS_AXIS_RIGHT_Y], STICK_MIN, STICK_MAX);
+    state->axes[PLAYOS_AXIS_LEFT_TRIGGER] =
+        normalize_trigger(raw_axes[PLAYOS_AXIS_LEFT_TRIGGER],
+                          TRIGGER_MIN, trigger_max);
+    state->axes[PLAYOS_AXIS_RIGHT_TRIGGER] =
+        normalize_trigger(raw_axes[PLAYOS_AXIS_RIGHT_TRIGGER],
+                          TRIGGER_MIN, trigger_max);
 
     return 0;
 }
