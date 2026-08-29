@@ -89,6 +89,17 @@ static int            vendor_fd = -1;             /* hid-asus-ally reserved node
 static int            trigger_max = TRIGGER_MAX;  /* Detected trigger range */
 static uint64_t       boot_time_us = 0;
 
+/* ROG Ally built-in controller face-button quirk.
+ *
+ * The Ally's internal controller enumerates as a standard Xbox 360 pad
+ * (name "Microsoft X-Box 360 pad", VID 045e:028e) on the SoC's internal USB
+ * port (phys "usb-0000:09:00.3-2/input0"), but its face buttons are wired
+ * rotated: physical X reports BTN_NORTH and physical Y reports BTN_WEST.
+ * A and B are standard. Swap NORTH<->WEST only for that device so external
+ * Xbox pads on other ports keep the standard mapping. Env override:
+ * PLAYOS_ROG_ALLY_FACE_SWAP=1 forces the swap, =0 forces it off. */
+static int g_rog_ally_face_swap = 0;
+
 /* Current button bitmap (before reserved-mask stripping) */
 static playos_button_mask_t current_buttons = 0;
 
@@ -115,6 +126,7 @@ static uint64_t get_time_us(void)
 /* Cached capability snapshot for one event device. */
 typedef struct {
     char           name[256];
+    char           phys[256];
     unsigned long  ev_bits[EVDEV_BITS(EV_MAX)];
     unsigned long  abs_bits[EVDEV_BITS(ABS_MAX)];
     unsigned long  key_bits[EVDEV_BITS(KEY_MAX)];
@@ -126,6 +138,8 @@ static int evdev_get_caps(int fd, evdev_caps_t *caps)
 
     if (ioctl(fd, EVIOCGNAME(sizeof(caps->name) - 1), caps->name) < 0)
         caps->name[0] = '\0';
+    if (ioctl(fd, EVIOCGPHYS(sizeof(caps->phys) - 1), caps->phys) < 0)
+        caps->phys[0] = '\0';
     if (ioctl(fd, EVIOCGBIT(0, sizeof(caps->ev_bits)), caps->ev_bits) < 0)
         return -1;
     if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(caps->abs_bits)), caps->abs_bits) < 0)
@@ -239,14 +253,21 @@ static float normalize_trigger(int32_t val, int32_t min, int32_t max)
  * Drain pending events from the evdev fd and update internal state.
  * Capped at MAX_EVENTS_PER_CALL to guarantee bounded latency.
  */
-static void process_event(const struct input_event *ev)
+static void process_event(const struct input_event *ev, int face_swap)
 {
     size_t i;
 
     switch (ev->type) {
-    case EV_KEY:
+    case EV_KEY: {
+        uint16_t code = ev->code;
+        if (face_swap) {
+            if (code == BTN_WEST)
+                code = BTN_NORTH;
+            else if (code == BTN_NORTH)
+                code = BTN_WEST;
+        }
         for (i = 0; i < sizeof(BUTTON_MAP) / sizeof(BUTTON_MAP[0]); i++) {
-            if (ev->code == BUTTON_MAP[i].evdev_code) {
+            if (code == BUTTON_MAP[i].evdev_code) {
                 if (ev->value) {
                     current_buttons |= BUTTON_MAP[i].button;
                 } else {
@@ -256,6 +277,7 @@ static void process_event(const struct input_event *ev)
             }
         }
         break;
+    }
 
     case EV_ABS:
         /* Store raw value */
@@ -295,7 +317,7 @@ static void process_event(const struct input_event *ev)
     }
 }
 
-static void drain_fd(int fd)
+static void drain_fd(int fd, int face_swap)
 {
     if (fd < 0) return;
 
@@ -306,15 +328,15 @@ static void drain_fd(int fd)
     while (count < MAX_EVENTS_PER_CALL
            && (n = read(fd, &ev, sizeof(ev))) == sizeof(ev)) {
         count++;
-        process_event(&ev);
+        process_event(&ev, face_swap);
     }
 }
 
 static void drain_events(void)
 {
-    drain_fd(evdev_fd);
-    drain_fd(home_fd);
-    drain_fd(vendor_fd);
+    drain_fd(evdev_fd, g_rog_ally_face_swap);
+    drain_fd(home_fd, 0);
+    drain_fd(vendor_fd, 0);
 }
 
 /* ── Device discovery ────────────────────────────────────────────── */
@@ -464,6 +486,32 @@ static int open_vendor_node(void)
     return open_matching_device("vendor node", is_vendor_node);
 }
 
+/* Detect the ROG Ally face-swap quirk for the opened gamepad fd. */
+static int platform_rog_ally_face_swap(const char *name, const char *phys)
+{
+    const char *env = getenv("PLAYOS_ROG_ALLY_FACE_SWAP");
+    if (env && env[0]) {
+        if (env[0] == '1' || env[0] == 'y' || env[0] == 'Y')
+            return 1;
+        if (env[0] == '0' || env[0] == 'n' || env[0] == 'N')
+            return 0;
+    }
+    return strstr(name, "X-Box") != NULL &&
+           strncmp(phys, "usb-0000:09:00.3-2", 18) == 0;
+}
+
+static void platform_detect_face_swap(int fd)
+{
+    char name[256] = {0};
+    char phys[256] = {0};
+    ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
+    ioctl(fd, EVIOCGPHYS(sizeof(phys) - 1), phys);
+    g_rog_ally_face_swap = platform_rog_ally_face_swap(name, phys);
+    PLAYOS_LOG_I("input", "platform: gamepad face-swap quirk %s "
+                 "(name='%s' phys='%s')",
+                 g_rog_ally_face_swap ? "ON" : "off", name, phys);
+}
+
 /* ── Public backend API ──────────────────────────────────────────── */
 
 int backend_evdev_controller_connected(void)
@@ -498,6 +546,8 @@ int backend_evdev_controller_connected(void)
             controller_next_retry_us = now + RESCAN_INTERVAL_US;
             return 0;
         }
+
+        platform_detect_face_swap(evdev_fd);
 
         /* Capture boot time on first connection */
         if (boot_time_us == 0) {
