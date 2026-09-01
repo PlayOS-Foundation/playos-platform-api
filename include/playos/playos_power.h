@@ -31,11 +31,12 @@ typedef enum {
     PLAYOS_PERF_PERFORMANCE   /**< High TDP — maximizes CPU/GPU performance */
 } PlayOSPerfProfile;
 
+/** Snapshot of current power and thermal state. */
 typedef struct {
-    PlayOSPowerState   power_state;
+    PlayOSPowerState   power_state;        /**< Power source state (battery/charging/charged/unknown) */
     int                battery_percent;    /**< 0–100. -1 if unknown. */
     int                minutes_remaining;  /**< Estimated minutes until empty (on battery) or until full (charging). -1 if unknown. */
-    PlayOSThermalState thermal_state;
+    PlayOSThermalState thermal_state;       /**< Current thermal classification (normal/warm/hot/critical) */
     int                cpu_temp_c;         /**< CPU package temperature in °C. -1 if unknown. */
     int                gpu_temp_c;         /**< GPU temperature in °C. -1 if unknown. */
     PlayOSPerfProfile  active_profile;     /**< Currently active performance profile. */

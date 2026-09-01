@@ -24,3 +24,5 @@ gen/
 
 # Logs
 *.loginstall/
+docs/api/
+examples/*.o
