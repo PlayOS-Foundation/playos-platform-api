@@ -2,16 +2,15 @@
  * backend_stub.c — Host input backend for the desktop shim (Sprint 15, T5).
  *
  * On the device, libplayos reads the controller from evdev (backend_evdev.c).
- * On a developer's host there are three cases, and this backend handles all of
- * them without inventing input:
+ * On a developer's host there are three cases, handled without inventing input:
  *
  *   1. A real gamepad is attached and readable -> delegate to backend_evdev.c, the
  *      same code the device uses. Nothing is duplicated.
  *   2. No gamepad, but the host's keyboard is readable -> map a documented set of
- *      keys to controller state so a game is playable on a laptop. This is a
- *      development affordance, documented in playos-spec/src/sdk-desktop-shim.md.
+ *      keys to controller state so a game is playable on a laptop. A development
+ *      affordance, documented in playos-spec/src/sdk-desktop-shim.md.
  *   3. Neither (Windows, or no permission to read /dev/input) -> report "no
- *      controller". The game then uses raylib's own input, which works everywhere.
+ *      controller", and the game uses raylib's own input, which works everywhere.
  *      A shim that synthesised button presses would be worse than one that reports
  *      nothing.
  *
@@ -27,6 +26,7 @@
 
 #include "backend_stub.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -46,11 +46,11 @@ struct stub_button_map { int code; playos_button_mask_t button; };
 struct stub_axis_map   { int code; int axis; float value; };
 
 static const struct stub_button_map STUB_BUTTONS[] = {
-    { KEY_Z, PLAYOS_BUTTON_SOUTH },      { KEY_X, PLAYOS_BUTTON_EAST },
-    { KEY_C, PLAYOS_BUTTON_WEST },       { KEY_V, PLAYOS_BUTTON_NORTH },
-    { KEY_Q, PLAYOS_BUTTON_L1 },         { KEY_E, PLAYOS_BUTTON_R1 },
-    { KEY_ENTER, PLAYOS_BUTTON_START },  { KEY_BACKSPACE, PLAYOS_BUTTON_SELECT },
-    { KEY_UP, PLAYOS_BUTTON_DPAD_UP },   { KEY_DOWN, PLAYOS_BUTTON_DPAD_DOWN },
+    { KEY_Z, PLAYOS_BUTTON_SOUTH },        { KEY_X, PLAYOS_BUTTON_EAST },
+    { KEY_C, PLAYOS_BUTTON_WEST },         { KEY_V, PLAYOS_BUTTON_NORTH },
+    { KEY_Q, PLAYOS_BUTTON_L1 },           { KEY_E, PLAYOS_BUTTON_R1 },
+    { KEY_ENTER, PLAYOS_BUTTON_START },    { KEY_BACKSPACE, PLAYOS_BUTTON_SELECT },
+    { KEY_UP, PLAYOS_BUTTON_DPAD_UP },     { KEY_DOWN, PLAYOS_BUTTON_DPAD_DOWN },
     { KEY_LEFT, PLAYOS_BUTTON_DPAD_LEFT }, { KEY_RIGHT, PLAYOS_BUTTON_DPAD_RIGHT },
 };
 
@@ -62,6 +62,47 @@ static const struct stub_axis_map STUB_AXES[] = {
 static int g_kbd[STUB_MAX_KEYS];
 static int g_kbd_count = -1;                 /* -1 = not probed yet */
 static unsigned char g_pressed[KEY_MAX + 1];
+
+/**
+ * Pure mapping: pressed-key bitmap -> controller state.
+ *
+ * Deliberately separate from the evdev read so it is unit-testable without
+ * hardware (tests/test_desktop_shim.c). It recomputes from the bitmap rather than
+ * toggling bits per event, so releasing one of two keys that share an axis leaves
+ * the other applied.
+ *
+ * `pressed` is indexed by key code and is `count` bytes long.
+ * Returns 1 when anything is held, 0 when nothing is.
+ */
+int
+backend_stub_state_from_keys(const unsigned char *pressed, size_t count,
+                             PlayOSControllerState *state)
+{
+    if (!pressed || !state)
+        return 0;
+
+    state->buttons = 0;
+    for (int i = 0; i < PLAYOS_AXIS_COUNT; i++)
+        state->axes[i] = 0.0f;
+
+    int held = 0;
+
+    for (size_t i = 0; i < sizeof(STUB_BUTTONS) / sizeof(STUB_BUTTONS[0]); i++) {
+        int code = STUB_BUTTONS[i].code;
+        if (code >= 0 && (size_t)code < count && pressed[code]) {
+            state->buttons |= STUB_BUTTONS[i].button;
+            held = 1;
+        }
+    }
+    for (size_t i = 0; i < sizeof(STUB_AXES) / sizeof(STUB_AXES[0]); i++) {
+        int code = STUB_AXES[i].code;
+        if (code >= 0 && (size_t)code < count && pressed[code]) {
+            state->axes[STUB_AXES[i].axis] = STUB_AXES[i].value;
+            held = 1;
+        }
+    }
+    return held;
+}
 
 /* A keyboard has letter keys and no gamepad buttons. Devices that look like pads
  * are left to backend_evdev.c, so we never double-count the same hardware. */
@@ -125,26 +166,20 @@ stub_poll_keyboard(PlayOSControllerState *state)
     for (int i = 0; i < g_kbd_count; i++)
         stub_drain_keyboard(g_kbd[i]);
 
-    int held = 0;
-
-    for (size_t i = 0; i < sizeof(STUB_BUTTONS) / sizeof(STUB_BUTTONS[0]); i++) {
-        if (g_pressed[STUB_BUTTONS[i].code]) {
-            state->buttons |= STUB_BUTTONS[i].button;
-            held = 1;
-        }
-    }
-    for (size_t i = 0; i < sizeof(STUB_AXES) / sizeof(STUB_AXES[0]); i++) {
-        if (g_pressed[STUB_AXES[i].code]) {
-            state->axes[STUB_AXES[i].axis] = STUB_AXES[i].value;
-            held = 1;
-        }
-    }
-    return held;
+    return backend_stub_state_from_keys(g_pressed, sizeof(g_pressed), state);
 }
 
-#else /* not Linux: there is no evdev to read, so there is no controller */
+#else /* not Linux: no evdev, so there are no key codes and no controller */
 
-#include <stdio.h>
+int
+backend_stub_state_from_keys(const unsigned char *pressed, size_t count,
+                             PlayOSControllerState *state)
+{
+    (void)pressed;
+    (void)count;
+    (void)state;
+    return 0;
+}
 
 static int
 stub_poll_keyboard(PlayOSControllerState *state)
