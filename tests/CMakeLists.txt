@@ -14,9 +14,15 @@ target_include_directories(test_gamepad_db PRIVATE
 )
 add_test(NAME test_gamepad_db COMMAND test_gamepad_db)
 
-# Sprint 15, T5: the host shim must let a game run off-device, and its lifecycle
-# calls must be safe no-ops (they would otherwise hang a desktop game).
-add_executable(test_desktop_shim test_desktop_shim.c)
-target_include_directories(test_desktop_shim PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_desktop_shim PRIVATE playos)
-add_test(NAME test_desktop_shim COMMAND test_desktop_shim)
+# Sprint 15, T5: the host shim must let a game run off-device, its lifecycle calls
+# must be safe no-ops, and its storage must point at the host. Only built for the
+# stub backend - the device build has neither the shim nor the XDG root, and its
+# storage assertions would be wrong by design.
+if(PLAYOS_BACKEND STREQUAL "stub" AND UNIX AND NOT APPLE)
+    add_executable(test_desktop_shim test_desktop_shim.c)
+    target_include_directories(test_desktop_shim PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/backends)
+    target_link_libraries(test_desktop_shim PRIVATE playos)
+    add_test(NAME test_desktop_shim COMMAND test_desktop_shim)
+endif()
