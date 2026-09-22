@@ -13,3 +13,10 @@ target_include_directories(test_gamepad_db PRIVATE
     ${CMAKE_SOURCE_DIR}/src/backends
 )
 add_test(NAME test_gamepad_db COMMAND test_gamepad_db)
+
+# Sprint 15, T5: the host shim must let a game run off-device, and its lifecycle
+# calls must be safe no-ops (they would otherwise hang a desktop game).
+add_executable(test_desktop_shim test_desktop_shim.c)
+target_include_directories(test_desktop_shim PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_desktop_shim PRIVATE playos)
+add_test(NAME test_desktop_shim COMMAND test_desktop_shim)

@@ -40,6 +40,15 @@ set_target_properties(playos PROPERTIES
 if(PLAYOS_BACKEND STREQUAL "stub" OR PLAYOS_BACKEND STREQUAL "auto")
     target_sources(playos PRIVATE src/backends/backend_stub.c)
     target_compile_definitions(playos PRIVATE PLAYOS_BACKEND_STUB)
+
+    # The host shim delegates to the evdev backend when a real gamepad is readable
+    # (Sprint 15, T5: same code as the device, not a copy), so those sources build
+    # with it wherever evdev exists.
+    if(UNIX AND NOT APPLE)
+        target_sources(playos PRIVATE
+            src/backends/backend_evdev.c
+            src/backends/gamepad_db.c)
+    endif()
 endif()
 
 if(PLAYOS_BACKEND STREQUAL "evdev")
