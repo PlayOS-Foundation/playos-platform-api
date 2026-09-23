@@ -389,27 +389,87 @@ static void drain_events(void)
 
 typedef int (*evdev_caps_predicate)(const evdev_caps_t *caps);
 
+/* ── Cached device handles ────────────────────────────────────────────────
+ * Opening and then closing a /dev/input/eventN node is expensive: close(2)
+ * runs evdev_release() → input_close_device() → synchronize_rcu(), which costs
+ * tens of milliseconds. Discovery used to open+close up to 32 nodes per pass,
+ * and the "missing class" retry ran every 2 s, so a client stalled ~0.4 s
+ * every 2 s — measured on the ROG Ally as a process parked in D state in
+ * __wait_rcu_gp (see the kernel stack below). Repeatedly closing the hid-asus
+ * node also stopped it delivering the Armoury/home button to the shell.
+ *
+ *   __wait_rcu_gp ← synchronize_rcu_normal ← input_close_device
+ *                 ← evdev_release ← __fput ← __x64_sys_close
+ *
+ * So: open each node at most once, keep the handle, and evaluate discovery
+ * predicates against the cached fd. A scan then costs a few ioctls and closes
+ * nothing, so it can safely stay on a 2 s retry.
+ */
+#define EVDEV_NODE_MAX 32
+static int s_node_fd[EVDEV_NODE_MAX];
+static int s_node_fd_ready;
+
+static void node_fd_table_init(void)
+{
+    if (s_node_fd_ready)
+        return;
+    for (int i = 0; i < EVDEV_NODE_MAX; i++)
+        s_node_fd[i] = -1;
+    s_node_fd_ready = 1;
+}
+
+/* Cached handle for /dev/input/event<index>, opened on first use. */
+static int node_fd(int index)
+{
+    if (index < 0 || index >= EVDEV_NODE_MAX)
+        return -1;
+
+    node_fd_table_init();
+
+    if (s_node_fd[index] >= 0) {
+        if (fcntl(s_node_fd[index], F_GETFL) >= 0)
+            return s_node_fd[index];
+        s_node_fd[index] = -1;              /* invalidated — reopen below */
+    }
+
+    char path[64];
+    snprintf(path, sizeof(path), "/dev/input/event%d", index);
+    s_node_fd[index] = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    return s_node_fd[index];
+}
+
+/* The only place a device handle is closed: when a *selected* node goes stale,
+ * drop it from the cache so the next scan reopens it. */
+static void node_fd_release(int fd)
+{
+    if (fd < 0)
+        return;
+
+    node_fd_table_init();
+    for (int i = 0; i < EVDEV_NODE_MAX; i++)
+        if (s_node_fd[i] == fd)
+            s_node_fd[i] = -1;
+    close(fd);
+}
+
 static int open_matching_device(const char *what, evdev_caps_predicate pred)
 {
-    char dev_path[64];
-    for (int i = 0; i < 32; i++) {
-        snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
-        int fd = open(dev_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd < 0) continue;
+    for (int i = 0; i < EVDEV_NODE_MAX; i++) {
+        int fd = node_fd(i);
+        if (fd < 0)
+            continue;
 
         evdev_caps_t caps;
-        if (evdev_get_caps(fd, &caps) != 0) {
-            close(fd);
-            continue;
-        }
+        if (evdev_get_caps(fd, &caps) != 0)
+            continue;                       /* keep the handle — do not close */
 
         if (pred(&caps)) {
+            char dev_path[64];
+            snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
             PLAYOS_LOG_I("input", "platform: %s: %s (%s)",
                          what, caps.name[0] ? caps.name : "?", dev_path);
             return fd;
         }
-
-        close(fd);
     }
 
     return -1;
@@ -443,31 +503,29 @@ static int open_controller(void)
     int best_fd = -1;
 
     /* Scan /dev/input/event* for a joystick device */
-    char dev_path[64];
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < EVDEV_NODE_MAX; i++) {
+        int fd = node_fd(i);
+        if (fd < 0)
+            continue;
+
+        char dev_path[64];
         snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
-        int fd = open(dev_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd < 0) continue;
 
         evdev_caps_t caps;
         if (evdev_get_caps(fd, &caps) != 0) {
-            PLAYOS_LOG_D("input", "platform: skip %s (%s): ioctl failed",
-                         caps.name[0] ? caps.name : "?", dev_path);
-            close(fd);
-            continue;
+            PLAYOS_LOG_D("input", "platform: skip %s: ioctl failed", dev_path);
+            continue;                       /* keep the handle — do not close */
         }
 
         if (!caps_has_gamepad_sticks(&caps)) {
             PLAYOS_LOG_D("input", "platform: skip %s (%s): missing gamepad "
                          "sticks/keys", caps.name[0] ? caps.name : "?", dev_path);
-            close(fd);
             continue;
         }
 
         if (!TEST_BIT(BTN_SOUTH, caps.key_bits)) {
             PLAYOS_LOG_D("input", "platform: skip %s (%s): missing BTN_SOUTH",
                          caps.name[0] ? caps.name : "?", dev_path);
-            close(fd);
             continue;
         }
 
@@ -494,7 +552,6 @@ static int open_controller(void)
                 trigger_max = abs_info.maximum;
                 PLAYOS_LOG_D("input", "platform: trigger max = %d", trigger_max);
             }
-            if (best_fd >= 0) close(best_fd);
             return fd;
         }
 
@@ -506,7 +563,6 @@ static int open_controller(void)
         } else {
             PLAYOS_LOG_D("input", "platform: ignoring additional gamepad: %s (%s)",
                          caps.name, dev_path);
-            close(fd);
         }
     }
 
@@ -613,9 +669,9 @@ int backend_evdev_controller_connected(void)
     if (evdev_fd >= 0) {
         /* Check if fd is still valid */
         if (fcntl(evdev_fd, F_GETFL) < 0) {
-            /* Stale fd — close and re-scan */
+            /* Stale fd — drop it from the cache and re-scan */
             PLAYOS_LOG_W("input", "platform: controller fd stale, re-scanning");
-            close(evdev_fd);
+            node_fd_release(evdev_fd);
             evdev_fd = -1;
         }
     }
@@ -650,7 +706,7 @@ int backend_evdev_controller_connected(void)
      * so a missing node must not mask an otherwise healthy controller. */
     if (home_fd >= 0 && fcntl(home_fd, F_GETFL) < 0) {
         PLAYOS_LOG_W("input", "platform: home node fd stale, re-scanning");
-        close(home_fd);
+        node_fd_release(home_fd);
         home_fd = -1;
     }
     if (home_fd < 0) {
@@ -667,7 +723,7 @@ int backend_evdev_controller_connected(void)
 
     if (vendor_fd >= 0 && fcntl(vendor_fd, F_GETFL) < 0) {
         PLAYOS_LOG_W("input", "platform: vendor node fd stale, re-scanning");
-        close(vendor_fd);
+        node_fd_release(vendor_fd);
         vendor_fd = -1;
     }
     if (vendor_fd < 0) {
