@@ -774,3 +774,217 @@ int backend_evdev_get_controller_state(PlayOSControllerState *state)
 
     return 0;
 }
+
+/* ── Touch (Sprint 17, ADR-0013) ─────────────────────────────────────────────
+ *
+ * The panel is read exactly like the controller: evdev, in this process, with no
+ * compositor or Wayland involvement. The seat is not the path here — PlayOS
+ * clients present no Wayland surfaces at all (ADR-0013) — so touch has to arrive
+ * the way the gamepad already does.
+ *
+ * Multitouch arrives as slots: ABS_MT_SLOT selects a slot, ABS_MT_TRACKING_ID
+ * opens a point (or closes it, with -1) and ABS_MT_POSITION_X/Y place it. One
+ * entry is kept per slot; active ones are exposed normalised to 0..1 across the
+ * panel's own range. Panels that report single-touch (BTN_TOUCH + ABS_X/ABS_Y)
+ * are exposed as one point so older hardware still works.
+ */
+
+#define TOUCH_SLOT_MAX 16
+
+struct touch_slot_state {
+    int32_t id;   /* tracking id, -1 when free */
+    int32_t x, y;
+};
+
+static int     touch_fd      = -1;
+static int     touch_tried   = 0;
+static int     touch_cur     = 0;
+static int     touch_single  = 0;   /* panel is single-touch */
+static int     touch_down    = 0;   /* BTN_TOUCH state (single-touch only) */
+static int32_t touch_sx, touch_sy;
+static int32_t touch_min_x, touch_max_x = 1;
+static int32_t touch_min_y, touch_max_y = 1;
+static struct touch_slot_state touch_slots[TOUCH_SLOT_MAX];
+
+static int
+caps_has_multitouch(const evdev_caps_t *caps)
+{
+    return TEST_BIT(EV_ABS, caps->ev_bits) &&
+           TEST_BIT(EV_KEY, caps->ev_bits) &&
+           TEST_BIT(ABS_MT_POSITION_X, caps->abs_bits) &&
+           TEST_BIT(ABS_MT_POSITION_Y, caps->abs_bits);
+}
+
+static int
+caps_has_single_touch(const evdev_caps_t *caps)
+{
+    return TEST_BIT(EV_ABS, caps->ev_bits) &&
+           TEST_BIT(EV_KEY, caps->ev_bits) &&
+           TEST_BIT(BTN_TOUCH, caps->key_bits) &&
+           TEST_BIT(ABS_X, caps->abs_bits) &&
+           TEST_BIT(ABS_Y, caps->abs_bits);
+}
+
+static void
+touch_read_range(void)
+{
+    struct input_absinfo ai;
+
+    if (ioctl(touch_fd, EVIOCGABS(ABS_MT_POSITION_X), &ai) == 0 && ai.maximum > ai.minimum) {
+        touch_min_x = ai.minimum;
+        touch_max_x = ai.maximum;
+    } else if (ioctl(touch_fd, EVIOCGABS(ABS_X), &ai) == 0 && ai.maximum > ai.minimum) {
+        touch_min_x = ai.minimum;
+        touch_max_x = ai.maximum;
+    }
+    if (ioctl(touch_fd, EVIOCGABS(ABS_MT_POSITION_Y), &ai) == 0 && ai.maximum > ai.minimum) {
+        touch_min_y = ai.minimum;
+        touch_max_y = ai.maximum;
+    } else if (ioctl(touch_fd, EVIOCGABS(ABS_Y), &ai) == 0 && ai.maximum > ai.minimum) {
+        touch_min_y = ai.minimum;
+        touch_max_y = ai.maximum;
+    }
+}
+
+static void
+touch_ensure(void)
+{
+    if (touch_fd >= 0 || touch_tried)
+        return;
+    touch_tried = 1;
+
+    for (int i = 0; i < EVDEV_NODE_MAX; i++) {
+        int fd = node_fd(i);
+        evdev_caps_t caps;
+
+        if (fd < 0 || evdev_get_caps(fd, &caps) != 0)
+            continue;
+        if (caps_has_multitouch(&caps)) {
+            touch_fd = fd;
+            touch_single = 0;
+            PLAYOS_LOG_W("input", "platform: touch panel '%s' (multitouch)", caps.name);
+            break;
+        }
+        if (caps_has_single_touch(&caps)) {
+            touch_fd = fd;
+            touch_single = 1;
+            PLAYOS_LOG_W("input", "platform: touch panel '%s' (single-touch)", caps.name);
+            break;
+        }
+    }
+
+    if (touch_fd < 0) {
+        PLAYOS_LOG_W("input", "platform: no touch panel found");
+        return;
+    }
+
+    for (int i = 0; i < TOUCH_SLOT_MAX; i++)
+        touch_slots[i].id = -1;
+    touch_read_range();
+}
+
+static void
+touch_handle_event(const struct input_event *ev)
+{
+    if (ev->type == EV_ABS) {
+        switch (ev->code) {
+        case ABS_MT_SLOT:
+            if (ev->value >= 0 && ev->value < TOUCH_SLOT_MAX)
+                touch_cur = ev->value;
+            break;
+        case ABS_MT_TRACKING_ID:
+            touch_slots[touch_cur].id = (ev->value < 0) ? -1 : ev->value;
+            break;
+        case ABS_MT_POSITION_X:
+            touch_slots[touch_cur].x = ev->value;
+            break;
+        case ABS_MT_POSITION_Y:
+            touch_slots[touch_cur].y = ev->value;
+            break;
+        case ABS_X:
+            if (touch_single)
+                touch_sx = ev->value;
+            break;
+        case ABS_Y:
+            if (touch_single)
+                touch_sy = ev->value;
+            break;
+        default:
+            break;
+        }
+    } else if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
+        touch_down = ev->value ? 1 : 0;
+    }
+}
+
+static void
+touch_drain(void)
+{
+    struct input_event ev[32];
+    ssize_t n;
+
+    while ((n = read(touch_fd, ev, sizeof(ev))) > 0) {
+        int count = (int)(n / (ssize_t)sizeof(ev[0]));
+        for (int i = 0; i < count; i++)
+            touch_handle_event(&ev[i]);
+    }
+}
+
+static float
+touch_norm(int32_t v, int32_t min, int32_t max)
+{
+    float span = (float)(max - min);
+
+    if (span <= 0.0f)
+        return 0.0f;
+    float f = ((float)(v - min)) / span;
+    if (f < 0.0f) f = 0.0f;
+    if (f > 1.0f) f = 1.0f;
+    return f;
+}
+
+int
+backend_evdev_touch_supported(void)
+{
+    touch_ensure();
+    return touch_fd >= 0 ? 1 : 0;
+}
+
+int
+backend_evdev_get_touch_state(PlayOSTouchPoint *points, int max_points)
+{
+    int n = 0;
+
+    if (!points || max_points <= 0)
+        return -1;
+
+    touch_ensure();
+    if (touch_fd < 0)
+        return -1;
+
+    touch_drain();
+
+    for (int i = 0; i < TOUCH_SLOT_MAX && n < max_points; i++) {
+        if (touch_slots[i].id < 0)
+            continue;
+        points[n].active  = 1;
+        points[n].id      = touch_slots[i].id;
+        points[n].raw_x   = touch_slots[i].x;
+        points[n].raw_y   = touch_slots[i].y;
+        points[n].x       = touch_norm(touch_slots[i].x, touch_min_x, touch_max_x);
+        points[n].y       = touch_norm(touch_slots[i].y, touch_min_y, touch_max_y);
+        n++;
+    }
+
+    if (n == 0 && touch_single && touch_down && max_points > 0) {
+        points[0].active = 1;
+        points[0].id     = 0;
+        points[0].raw_x  = touch_sx;
+        points[0].raw_y  = touch_sy;
+        points[0].x      = touch_norm(touch_sx, touch_min_x, touch_max_x);
+        points[0].y      = touch_norm(touch_sy, touch_min_y, touch_max_y);
+        n = 1;
+    }
+
+    return n;
+}

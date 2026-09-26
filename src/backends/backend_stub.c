@@ -235,3 +235,18 @@ backend_stub_get_controller_state(PlayOSControllerState *state)
 
     return -1;
 }
+
+/* Touch: the desktop/stub backend has no panel (Sprint 17, ADR-0013). */
+int
+backend_stub_touch_supported(void)
+{
+    return 0;
+}
+
+int
+backend_stub_get_touch_state(PlayOSTouchPoint *points, int max_points)
+{
+    (void)points;
+    (void)max_points;
+    return -1;
+}

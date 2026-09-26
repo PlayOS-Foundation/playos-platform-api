@@ -22,4 +22,16 @@ int backend_evdev_controller_connected(void);
  */
 int backend_evdev_get_controller_state(PlayOSControllerState *state);
 
+/**
+ * Returns 1 if a touch panel is connected, 0 otherwise.
+ */
+int backend_evdev_touch_supported(void);
+
+/**
+ * Fills up to max_points entries of points with the current touch snapshot.
+ *
+ * @return Number of active points, or -1 if no panel is present.
+ */
+int backend_evdev_get_touch_state(PlayOSTouchPoint *points, int max_points);
+
 #endif /* BACKEND_EVDEV_H */

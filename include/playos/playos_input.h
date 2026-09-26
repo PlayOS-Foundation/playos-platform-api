@@ -13,6 +13,37 @@
 
 #include <stdint.h>
 
+/**
+ * Touch (Sprint 17, ADR-0013). The panel is read from evdev, exactly like the
+ * controller: no compositor or Wayland involvement, because PlayOS clients do not
+ * present as Wayland surfaces. Coordinates are normalised 0..1 across the panel's
+ * own range so callers need not know its resolution; raw values are provided for
+ * callers that map to pixels.
+ */
+#define PLAYOS_TOUCH_POINT_MAX 10
+
+typedef struct {
+    int     active;
+    int32_t id;            /* tracking id, stable while the finger is down */
+    float   x, y;          /* 0..1 across the panel */
+    int32_t raw_x, raw_y;  /* panel coordinates, for pixel mapping */
+} PlayOSTouchPoint;
+
+/**
+ * Returns 1 if a touch panel is present, 0 otherwise.
+ */
+int playos_input_touch_supported(void);
+
+/**
+ * Fills up to max_points entries of points with the current touch snapshot.
+ *
+ * @param[out] points      Destination array.
+ * @param[in]  max_points  Capacity of points.
+ * @return  Number of active points (0 when the screen is untouched), or -1 if no
+ *          panel is present.
+ */
+int playos_input_get_touch_state(PlayOSTouchPoint *points, int max_points);
+
 #ifdef __cplusplus
 extern "C" {
 #endif

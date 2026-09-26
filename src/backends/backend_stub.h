@@ -35,4 +35,7 @@ int backend_stub_get_controller_state(PlayOSControllerState *state);
 int backend_stub_state_from_keys(const unsigned char *pressed, size_t count,
                                  PlayOSControllerState *state);
 
+int backend_stub_touch_supported(void);
+int backend_stub_get_touch_state(PlayOSTouchPoint *points, int max_points);
+
 #endif /* BACKEND_STUB_H */

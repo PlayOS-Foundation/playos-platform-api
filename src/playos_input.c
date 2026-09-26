@@ -54,3 +54,31 @@ int playos_input_get_controller_state(PlayOSControllerState *state)
 
     return 0;
 }
+
+/* Touch (Sprint 17, ADR-0013): same evdev path as the controller. */
+#ifdef PLAYOS_BACKEND_EVDEV
+int
+playos_input_touch_supported(void)
+{
+    return backend_evdev_touch_supported();
+}
+
+int
+playos_input_get_touch_state(PlayOSTouchPoint *points, int max_points)
+{
+    return backend_evdev_get_touch_state(points, max_points);
+}
+#else
+int
+playos_input_touch_supported(void)
+{
+    return backend_stub_touch_supported();
+}
+
+int
+playos_input_get_touch_state(PlayOSTouchPoint *points, int max_points)
+{
+    return backend_stub_get_touch_state(points, max_points);
+}
+#endif
+
